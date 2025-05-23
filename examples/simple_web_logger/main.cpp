@@ -15,6 +15,10 @@
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <AsyncElegantOTA.h>
+
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/StaticPoolPacketManager.h>
 #include <helpers/SimpleMeshTables.h>
@@ -893,6 +897,16 @@ public:
       }
       Serial.println("done.");
       store.save("_main", self_id);
+    } else if (memcmp(command, "start ota", 9) == 0) {
+      char id[160];
+      sprintf(id, "MeshCore Logger (%s %s)", __DATE__, __TIME__);
+      AsyncWebServer* server = new AsyncWebServer(80);
+      AsyncElegantOTA.setID(id);
+      AsyncElegantOTA.begin(server);    // Start ElegantOTA
+      server->begin();
+      Serial.print("  Go to http://");
+      Serial.print(WiFi.localIP());
+      Serial.println("/update");
     } else if (memcmp(command, "help", 4) == 0) {
       Serial.println("Commands:");
       Serial.println("   set {name|lat|lon|freq|tx|af} {value}");
@@ -910,6 +924,7 @@ public:
       Serial.println("   public <text>");
       Serial.println("   wifi {ssid|password} {value}");
       Serial.println("   log {url|auth|report|raw} {value}");
+      Serial.println("   start ota");
     } else {
       Serial.print("   ERROR: unknown command: "); Serial.println(command);
     }
