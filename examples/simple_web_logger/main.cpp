@@ -1018,16 +1018,18 @@ void WiFiTaskCode(void * pvParameters) {
         String auth = "Bearer ";
         auth += the_mesh.getLogPrefs()->auth;
 
-        if (memcmp(the_mesh.getLogPrefs()->url, "http", 4) != 0) {
-          Serial.println("URL Not set");
-          continue;
-        }
-
         char *ptr = messageQueue.front();
         if (ptr != nullptr) {
           if (the_mesh.debugPrint()) {
             Serial.printf("Queue peek %s\n", ptr);
           }
+
+          if (memcmp(the_mesh.getLogPrefs()->url, "http", 4) != 0) {
+            Serial.println("Url not set.");
+            messageQueue.pop();
+            delete[] ptr;
+          }
+
           bool sent = false;
 
           // WiFi send
