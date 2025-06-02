@@ -28,7 +28,7 @@
 
 /* ---------------------------------- CONFIGURATION ------------------------------------- */
 
-#define FIRMWARE_VER_TEXT   "v2 (build: 4 Feb 2025)"
+#define FIRMWARE_VER_TEXT   "v4 (build: 4 Feb 2025)"
 
 #ifndef LORA_FREQ
   #define LORA_FREQ   915.0
@@ -63,6 +63,8 @@ static bool ntpSynced = false;
 const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = 60 * 60 * 3;
 const int   daylightOffset_sec = 3600;
+const unsigned long ntpSyncInterval = 5 * 60 * 1000;
+unsigned long ntpNext = 0;
 
 // RTOS, wifi thread
 TaskHandle_t WiFiTask;
@@ -981,10 +983,16 @@ void WiFiTaskCode(void * pvParameters) {
       connected = true;
       sendsys = false;
       lastConencted = millis();
+
+      if (lastConencted >= ntpNext) {
+        ntpSynced = false;
+      }
+
       if (!ntpSynced) {
         configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
         unsigned time = getTimestamp();
         the_mesh.setClock(time, true);
+        ntpNext = lastConencted + ntpSyncInterval;
       }
 
       if (the_mesh.getLogPrefs()->selfreport > 0 && millis() > nextReport) {
