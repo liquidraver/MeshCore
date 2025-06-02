@@ -327,18 +327,25 @@ protected:
         Serial.println();
       }
 
+      uint8_t hash[MAX_HASH_SIZE];
+      pkt->calculatePacketHash(hash);
+
       char sender[(PUB_KEY_SIZE * 2) + 1];
       char path[(pkt->path_len * 2) + 1];
       char payload[(pkt->payload_len * 2) + 1];
+      char strhash[MAX_HASH_SIZE * 2 + 1];
+
       mesh::Utils::toHex(sender, self_id.pub_key, PUB_KEY_SIZE);
       mesh::Utils::toHex(path, pkt->path, pkt->path_len);
       mesh::Utils::toHex(payload, pkt->payload, pkt->payload_len);
+      mesh::Utils::toHex(strhash, hash, MAX_HASH_SIZE);
 
       JsonDocument doc;
       doc["version"] = 1;
       doc["type"] = "RAW";
       doc["reporter"] = sender;
       doc["recvtime"] = getRTCClock()->getCurrentTime();
+      doc["hash"] = strhash;
       doc["packet"]["header"]["raw"] = pkt->header;
       doc["packet"]["header"]["route-type"] = pkt->header & PH_ROUTE_MASK;
       doc["packet"]["header"]["payload-type"] = (pkt->header >> PH_TYPE_SHIFT) & PH_TYPE_MASK;
@@ -369,16 +376,22 @@ protected:
       return;
     }
 
+    uint8_t hash[MAX_HASH_SIZE];
+    pkt->calculatePacketHash(hash);
+
     char pubkey[(PUB_KEY_SIZE * 2) + 1];
     char sender[(PUB_KEY_SIZE * 2) + 1];
+    char strhash[MAX_HASH_SIZE * 2 + 1];
 
     mesh::Utils::toHex(pubkey, id.pub_key, PUB_KEY_SIZE);
     mesh::Utils::toHex(sender, self_id.pub_key, PUB_KEY_SIZE);
+    mesh::Utils::toHex(strhash, hash, MAX_HASH_SIZE);
 
     JsonDocument doc;
     doc["version"] = 1;
     doc["type"] = "ADV";
     doc["reporter"] = sender;
+    doc["hash"] = strhash;
     doc["snr"] = pkt->getSNR();
     doc["time"]["local"] = getRTCClock()->getCurrentTime();
     doc["time"]["sender"] = timestamp;
@@ -437,16 +450,22 @@ protected:
   }
 
   void onMessageRecv(const ContactInfo& from, mesh::Packet* pkt, uint32_t sender_timestamp, const char *text) override {
+    uint8_t hash[MAX_HASH_SIZE];
+    pkt->calculatePacketHash(hash);
+
     char pubkey[(PUB_KEY_SIZE * 2) + 1];
     char sender[(PUB_KEY_SIZE * 2) + 1];
+    char strhash[MAX_HASH_SIZE * 2 + 1];
 
     mesh::Utils::toHex(pubkey, from.id.pub_key, PUB_KEY_SIZE);
     mesh::Utils::toHex(sender, self_id.pub_key, PUB_KEY_SIZE);
+    mesh::Utils::toHex(strhash, hash, MAX_HASH_SIZE);
 
     JsonDocument doc;
     doc["version"] = 1;
     doc["type"] = "MSG";
     doc["reporter"] = sender;
+    doc["hash"] = strhash;
     doc["snr"] = pkt->getSNR();
     doc["time"]["local"] = getRTCClock()->getCurrentTime();
     doc["time"]["sender"] = sender_timestamp;
@@ -489,16 +508,22 @@ protected:
   }
 
   void onChannelMessageRecv(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t timestamp, const char *text) override {
+    uint8_t hash[MAX_HASH_SIZE];
+    pkt->calculatePacketHash(hash);
+
     char chhash[(PUB_KEY_SIZE * 2) + 1];
     char sender[(PUB_KEY_SIZE * 2) + 1];
+    char strhash[MAX_HASH_SIZE * 2 + 1];
 
     mesh::Utils::toHex(chhash, channel.hash, PATH_HASH_SIZE);
     mesh::Utils::toHex(sender, self_id.pub_key, PUB_KEY_SIZE);
+    mesh::Utils::toHex(strhash, hash, MAX_HASH_SIZE);
 
     JsonDocument doc;
     doc["version"] = 1;
     doc["type"] = "PUB";
     doc["reporter"] = sender;
+    doc["hash"] = strhash;
     doc["snr"] = pkt->getSNR();
     doc["time"]["local"] = getRTCClock()->getCurrentTime();
     doc["time"]["sender"] = timestamp;
