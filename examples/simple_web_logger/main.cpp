@@ -21,10 +21,11 @@
 
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/StaticPoolPacketManager.h>
-#include <helpers/SimpleMeshTables.h>
 #include <helpers/IdentityStore.h>
 #include <RTClib.h>
 #include <target.h>
+
+#include "LoggerMeshTables.h"
 
 /* ---------------------------------- CONFIGURATION ------------------------------------- */
 
@@ -158,6 +159,7 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
   NodePrefs _prefs;
   WiFiPrefs _wifi;
   LogPrefs _logp;
+  LoggerMeshTables* _tables;
   uint32_t expected_ack_crc;
   ChannelDetails* _public;
   unsigned long last_msg_sent;
@@ -290,7 +292,7 @@ protected:
   }
 
   bool allowPacketForward(const mesh::Packet* packet) override {
-    return _logp.dofwd;
+    return _logp.dofwd && _tables->hasSeen2(packet);
   }
 
   //void BaseChatMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len)
@@ -563,7 +565,7 @@ protected:
   }
 
 public:
-  MyMesh(mesh::Radio& radio, StdRNG& rng, mesh::RTCClock& rtc, SimpleMeshTables& tables)
+  MyMesh(mesh::Radio& radio, StdRNG& rng, mesh::RTCClock& rtc, LoggerMeshTables& tables)
      : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables)
   {
     // defaults
@@ -577,6 +579,7 @@ public:
 
     command[0] = 0;
     curr_recipient = NULL;
+    _tables = &tables;
   }
 
   float getFreqPref() const { return _prefs.freq; }
@@ -983,7 +986,7 @@ public:
 };
 
 StdRNG fast_rng;
-SimpleMeshTables tables;
+LoggerMeshTables tables;
 MyMesh the_mesh(radio_driver, fast_rng, *new VolatileRTCClock(), tables); // TODO: test with 'rtc_clock' in target.cpp
 
 void halt() {
