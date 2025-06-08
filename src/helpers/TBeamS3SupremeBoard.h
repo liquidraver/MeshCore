@@ -15,14 +15,14 @@
 #define  P_LORA_MISO    13  //SX1262 MISO pin
 #define  P_LORA_MOSI    11  //SX1262 MOSI pin
 
-#define PIN_BOARD_SDA 17  //SDA for OLED, BME280, and QMC6310U (0x1C)
-#define PIN_BOARD_SCL 18  //SCL for OLED, BME280, and QMC6310U (0x1C)
+//#define PIN_BOARD_SDA 17  //SDA for OLED, BME280, and QMC6310U (0x1C)
+//#define PIN_BOARD_SCL 18  //SCL for OLED, BME280, and QMC6310U (0x1C)
 
 #define PIN_BOARD_SDA1 42  //SDA for PMU and PFC8563 (RTC)
 #define PIN_BOARD_SCL1 41  //SCL for PMU and PFC8563 (RTC)
 #define PIN_PMU_IRQ 40     //IRQ pin for PMU
 
-#define PIN_USER_BTN 0
+//#define PIN_USER_BTN 0
 
 #define P_BOARD_SPI_MOSI 35  //SPI for SD Card and QMI8653 (IMU)
 #define P_BOARD_SPI_MISO 37  //SPI for SD Card and QMI8653 (IMU)
@@ -58,11 +58,12 @@ public:
   void printPMU();
 #endif
   bool power_init();
+
   void begin() {
 
-    power_init();
-
     ESP32Board::begin();
+
+    power_init();
 
     esp_reset_reason_t reason = esp_reset_reason();
     if (reason == ESP_RST_DEEPSLEEP) {
@@ -74,6 +75,7 @@ public:
       rtc_gpio_hold_dis((gpio_num_t)P_LORA_NSS);
       rtc_gpio_deinit((gpio_num_t)P_LORA_DIO_1);
     }
+    power_init();
   }
 
   void enterDeepSleep(uint32_t secs, int pin_wake_btn = -1) {

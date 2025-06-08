@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "t1000e_sensors.h"
 #include "target.h"
 #include <helpers/sensors/MicroNMEALocationProvider.h>
 
@@ -9,8 +10,12 @@ RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BU
 WRAPPER_CLASS radio_driver(radio, board);
 
 VolatileRTCClock rtc_clock;
-MicroNMEALocationProvider nmea = MicroNMEALocationProvider(Serial1);
+MicroNMEALocationProvider nmea = MicroNMEALocationProvider(Serial1, &rtc_clock);
 T1000SensorManager sensors = T1000SensorManager(nmea);
+
+#ifdef DISPLAY_CLASS
+  NullDisplayDriver display;
+#endif
 
 #ifndef LORA_CR
   #define LORA_CR      5
@@ -154,7 +159,11 @@ bool T1000SensorManager::begin() {
 
 bool T1000SensorManager::querySensors(uint8_t requester_permissions, CayenneLPP& telemetry) {
   if (requester_permissions & TELEM_PERM_LOCATION) {   // does requester have permission?
-    telemetry.addGPS(TELEM_CHANNEL_SELF, node_lat, node_lon, 0.0f);
+    telemetry.addGPS(TELEM_CHANNEL_SELF, node_lat, node_lon, node_altitude);
+  }
+  if (requester_permissions & TELEM_PERM_ENVIRONMENT) {
+    telemetry.addLuminosity(TELEM_CHANNEL_SELF, t1000e_get_light());
+    telemetry.addTemperature(TELEM_CHANNEL_SELF, t1000e_get_temperature());
   }
   return true;
 }
@@ -168,6 +177,7 @@ void T1000SensorManager::loop() {
     if (_nmea->isValid()) {
       node_lat = ((double)_nmea->getLatitude())/1000000.;
       node_lon = ((double)_nmea->getLongitude())/1000000.;
+      node_altitude = ((double)_nmea->getAltitude()) / 1000.0;
       //Serial.printf("lat %f lon %f\r\n", _lat, _lon);
     }
     next_gps_update = millis() + 1000;

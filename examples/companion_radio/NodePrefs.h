@@ -1,6 +1,4 @@
-#ifndef NODE_PREFS_H
-#define NODE_PREFS_H
-
+#pragma once
 #include <cstdint> // For uint8_t, uint32_t
 
 #define TELEM_MODE_DENY            0
@@ -19,8 +17,7 @@ struct NodePrefs {  // persisted to file
   uint8_t tx_power_dbm;
   uint8_t telemetry_mode_base;
   uint8_t telemetry_mode_loc;
+  uint8_t telemetry_mode_env;
   float rx_delay_base;
   uint32_t ble_pin;
 };
-
-#endif // NODE_PREFS_H

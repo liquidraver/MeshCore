@@ -16,6 +16,10 @@ ESP32RTCClock fallback_clock;
 AutoDiscoverRTCClock rtc_clock(fallback_clock);
 SensorManager sensors;
 
+#ifdef DISPLAY_CLASS
+  DISPLAY_CLASS display;
+#endif
+
 #ifndef LORA_CR
   #define LORA_CR      5
 #endif
@@ -43,7 +47,11 @@ bool radio_init() {
   }
   
   radio.setCRC(1);
-  
+
+#if defined(SX126X_RXEN) && defined(SX126X_TXEN)
+  radio.setRfSwitchPins(SX126X_RXEN, SX126X_TXEN);
+#endif 
+
 #ifdef SX126X_CURRENT_LIMIT
   radio.setCurrentLimit(SX126X_CURRENT_LIMIT);
 #endif
