@@ -398,9 +398,11 @@ protected:
     doc["time"]["local"] = getRTCClock()->getCurrentTime();
     doc["time"]["sender"] = timestamp;
     doc["contact"]["new"] = is_new;
-    doc["contact"]["type"] = from->type;
-    doc["contact"]["flags"] = from->flags;
-    doc["contact"]["name"] = from->name;
+    doc["contact"]["type"] = parser.getType();
+    doc["contact"]["feat1"] = parser.getFeat1();
+    doc["contact"]["feat2"] = parser.getFeat2();
+    doc["contact"]["flags"] = app_data[0];
+    doc["contact"]["name"] = parser.getName();
     doc["contact"]["pubkey"] = pubkey;
     doc["contact"]["lat"] = parser.getIntLat();
     doc["contact"]["lon"] = parser.getIntLon();
@@ -409,7 +411,7 @@ protected:
 
     // Serial prints
     if (debugPrint()) {
-      Serial.printf("ADVERT from -> %s\n", from->name);
+      Serial.printf("ADVERT from -> %s (%s)\n", parser.getName(), from->name);
       Serial.printf("  lat:       %.6f\n", parser.getIntLat() / 1000000.0);
       Serial.printf("  lon:       %.6f\n", parser.getIntLon() / 1000000.0);
     }
