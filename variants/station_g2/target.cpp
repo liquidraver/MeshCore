@@ -15,28 +15,47 @@ WRAPPER_CLASS radio_driver(radio, board);
 ESP32RTCClock fallback_clock;
 AutoDiscoverRTCClock rtc_clock(fallback_clock);
 
-#if defined(ENV_INCLUDE_GPS) && ENV_INCLUDE_GPS
-#include <HardwareSerial.h>
-#include <helpers/sensors/MicroNMEALocationProvider.h>
-HardwareSerial GPSSerial(1);
-MicroNMEALocationProvider locationProvider(GPSSerial);
-EnvironmentSensorManager sensors(locationProvider);
+#if ENV_INCLUDE_GPS
+  #include <helpers/sensors/MicroNMEALocationProvider.h>
+  #include <helpers/sensors/LocationProvider.h>
+  MicroNMEALocationProvider nmea = MicroNMEALocationProvider(Serial1);
+  EnvironmentSensorManager sensors = EnvironmentSensorManager(nmea);
 #else
-EnvironmentSensorManager sensors;
+  EnvironmentSensorManager sensors;
 #endif
 
 #ifdef DISPLAY_CLASS
   DISPLAY_CLASS display;
 #endif
 
+// Helper for sending setup commands to GPS if needed
+void gps_setup_commands() {
+#if ENV_INCLUDE_GPS
+  // Give the GPS some time to boot
+  delay(500);
+
+  // Initialize the L76K Chip, Enable GPS / Beidou / Glonass / Galileo / QZSS / SBAS
+  Serial1.write("$PCAS04,63*1F\r\n");
+  delay(250);
+
+  // Only ask for RMC and GGA, more than enough for us
+  Serial1.write("$PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0*02\r\n");
+  delay(250);
+
+  // Switch to Vehicle Mode, since SoftRF enables Aviation < 2g
+  Serial1.write("$PCAS11,3*1E\r\n");
+  delay(250);
+#endif
+}
 
 bool radio_init() {
   fallback_clock.begin();
   rtc_clock.begin(Wire);
 
-#if defined(ENV_INCLUDE_GPS) && ENV_INCLUDE_GPS
+#ifdef ENV_INCLUDE_GPS
   // Start the GPS UART (9600 is typical for UBLOX, change if needed)
-  GPSSerial.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+  // Serial1.begin(9600, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
+   gps_setup_commands(); // <---- Send GPS init commands
 #endif
 
 #if defined(P_LORA_SCLK)

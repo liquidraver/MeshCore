@@ -293,7 +293,7 @@ void EnvironmentSensorManager::initBasicGPS() {
   #ifdef PIN_GPS_EN
     digitalWrite(PIN_GPS_EN, LOW);  // Power off GPS until the setting is changed
   #endif
-  gps_active = false; //Set GPS visibility off until setting is changed
+  gps_active = true; //Set GPS visibility off until setting is changed
 }
 
 void EnvironmentSensorManager::start_gps() {
