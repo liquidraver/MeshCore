@@ -14,7 +14,16 @@ WRAPPER_CLASS radio_driver(radio, board);
 
 ESP32RTCClock fallback_clock;
 AutoDiscoverRTCClock rtc_clock(fallback_clock);
+
+#if defined(ENV_INCLUDE_GPS) && ENV_INCLUDE_GPS
+#include <HardwareSerial.h>
+#include <helpers/sensors/MicroNMEALocationProvider.h>
+HardwareSerial GPSSerial(1);
+MicroNMEALocationProvider locationProvider(GPSSerial);
+EnvironmentSensorManager sensors(locationProvider);
+#else
 EnvironmentSensorManager sensors;
+#endif
 
 #ifdef DISPLAY_CLASS
   DISPLAY_CLASS display;
@@ -24,6 +33,11 @@ EnvironmentSensorManager sensors;
 bool radio_init() {
   fallback_clock.begin();
   rtc_clock.begin(Wire);
+
+#if defined(ENV_INCLUDE_GPS) && ENV_INCLUDE_GPS
+  // Start the GPS UART (9600 is typical for UBLOX, change if needed)
+  GPSSerial.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+#endif
 
 #if defined(P_LORA_SCLK)
   spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI);
