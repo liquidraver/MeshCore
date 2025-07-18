@@ -968,7 +968,14 @@ public:
     int len = strlen(command);
     while (Serial.available() && len < sizeof(command)-1) {
       char c = Serial.read();
-      if (c != '\n') { 
+      if (c == 0x08) { // backspace
+        if (len > 0) {
+          command[len - 1] = 0;
+          len--;
+          Serial.print(c);
+          Serial.print(' ');
+        }
+      } else if (c != '\n') {
         command[len++] = c;
         command[len] = 0;
       }
