@@ -211,6 +211,59 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
     }
   }
 
+  void deleteChannels() {
+    if (_fs->exists("/channels2")) {
+      _fs->remove("/channels2");
+    }
+  }
+
+  void loadChannels() {
+    if (_fs->exists("/channels2")) {
+      File file = _fs->open("/channels2");
+      if (file) {
+        bool full = false;
+        uint8_t channel_idx = 0;
+        while (!full) {
+          ChannelDetails ch;
+          uint8_t unused[4];
+
+          bool success = (file.read(unused, 4) == 4);
+          success = success && (file.read((uint8_t *)ch.name, 32) == 32);
+          success = success && (file.read((uint8_t *)ch.channel.secret, 32) == 32);
+
+          if (!success) break; // EOF
+
+          if (setChannel(channel_idx, ch)) {
+            channel_idx++;
+          } else {
+            full = true;
+          }
+        }
+        file.close();
+      }
+    }
+  }
+
+  void saveChannels() {
+    File file = _fs->open("/channels2", "w", true);
+    if (file) {
+      uint8_t channel_idx = 0;
+      ChannelDetails ch;
+      uint8_t unused[4];
+      memset(unused, 0, 4);
+
+      while (getChannel(channel_idx, ch)) {
+        bool success = (file.write(unused, 4) == 4);
+        success = success && (file.write((uint8_t *)ch.name, 32) == 32);
+        success = success && (file.write((uint8_t *)ch.channel.secret, 32) == 32);
+
+        if (!success) break; // write failed
+        channel_idx++;
+      }
+      file.close();
+    }
+  }
+
   void saveContacts() {
     File file = _fs->open("/contacts", "w", true);
     if (file) {
@@ -534,6 +587,8 @@ protected:
     doc["message"]["text"] = text;
     doc["message"]["header"] = pkt->header;
     doc["message"]["path"] = getPath(pkt);
+    doc["channel"]["hash"] = chhash;
+
     messageQueue.push(doc);
 
     if (pkt->isRouteDirect()) {
@@ -651,7 +706,8 @@ public:
     }
 
     loadContacts();
-    _public = addChannel("Test", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
+    loadChannels();
+    _public = addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
 
     toggleWiFi(true);
   }
@@ -828,6 +884,33 @@ public:
       }
     } else if (memcmp(command, "import ", 7) == 0) {
       importCard(&command[7]);
+    } else if (memcmp(command, "channel ", 8) == 0) {
+      const char* method = &command[8];
+      if (memcmp(method, "add ", 4) == 0) {
+        const char* psk = &method[4];
+        ChannelDetails* ch = addChannel(psk, psk);
+        if (ch) {
+          saveChannels();
+          Serial.println("  Channel added\n");
+        }
+      } else if (memcmp(method, "delete", 6) == 0) {
+        deleteChannels();
+        Serial.println("  OK - reboot to apply");
+      } else if (memcmp(method, "ls", 2) == 0) {
+        uint8_t channel_idx = 0;
+        ChannelDetails ch;
+        uint8_t unused[4];
+        memset(unused, 0, 4);
+
+        Serial.println("Channels:");
+        while (getChannel(channel_idx, ch)) {
+          Serial.printf(" [%2d] %s\n", channel_idx, ch.name);
+          channel_idx++;
+        }
+        Serial.println();
+      } else {
+        Serial.println("  Invalid option");
+      }
     } else if (memcmp(command, "set ", 4) == 0) {
       const char* config = &command[4];
       if (memcmp(config, "af ", 3) == 0) {
@@ -956,6 +1039,7 @@ public:
       Serial.println("   public <text>");
       Serial.println("   wifi {ssid|password} {value}");
       Serial.println("   log {url|auth|report|raw} {value}");
+      Serial.println("   channel {add|ls} {value}");
       Serial.println("   start ota");
     } else {
       Serial.print("   ERROR: unknown command: "); Serial.println(command);
