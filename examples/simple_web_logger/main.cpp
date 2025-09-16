@@ -1012,6 +1012,9 @@ public:
       }
       Serial.println("done.");
       store.save("_main", self_id);
+    } else if (memcmp(command, "reboot", 6) == 0) {
+      Serial.println("Rebooting...");
+      ESP.restart();
     } else if (memcmp(command, "start ota", 9) == 0) {
       char id[160];
       sprintf(id, "MeshCore Logger (%s %s)", __DATE__, __TIME__);
