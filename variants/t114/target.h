@@ -2,14 +2,15 @@
 
 #define RADIOLIB_STATIC_ONLY 1
 #include <RadioLib.h>
-#include <helpers/RadioLibWrappers.h>
+#include <helpers/radiolib/RadioLibWrappers.h>
 #include <helpers/nrf52/T114Board.h>
-#include <helpers/CustomSX1262Wrapper.h>
+#include <helpers/radiolib/CustomSX1262Wrapper.h>
 #include <helpers/AutoDiscoverRTCClock.h>
 #include <helpers/SensorManager.h>
 #include <helpers/sensors/LocationProvider.h>
 #ifdef DISPLAY_CLASS
   #include <helpers/ui/ST7789Display.h>
+  #include <helpers/ui/MomentaryButton.h>
 #endif
 
 class T114SensorManager : public SensorManager {
@@ -37,6 +38,7 @@ extern T114SensorManager sensors;
 
 #ifdef DISPLAY_CLASS
   extern DISPLAY_CLASS display;
+  extern MomentaryButton user_btn;
 #endif
 
 bool radio_init();

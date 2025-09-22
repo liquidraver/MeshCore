@@ -1,25 +1,32 @@
 # Meshcore payloads
 Inside of each [meshcore packet](./packet_structure.md) is a payload, identified by the payload type in the packet header. The types of payloads are:
 
+* Node advertisement.
+* Acknowledgment.
+* Returned path.
 * Request (destination/source hashes + MAC).
 * Response to REQ or ANON_REQ.
 * Plain text message.
-* Acknowledgment.
-* Node advertisement.
+* Anonymous request.
 * Group text message (unverified).
 * Group datagram (unverified).
-* Anonymous request.
-* Returned path.
+* Multi-part packet
 * Custom packet (raw bytes, custom encryption).
 
-This document defines the structure of each of these payload types
+This document defines the structure of each of these payload types.
+
+NOTE: all 16 and 32-bit integer fields are Little Endian.
+
+## Important concepts:
+
+* Node hash: the first byte of the node's public key
 
 # Node advertisement
 This kind of payload notifies receivers that a node exists, and gives information about the node
 
 | Field         | Size (bytes)    | Description                                              |
 |---------------|-----------------|----------------------------------------------------------|
-| public key    | 32              | Ed25519 public key                                       |
+| public key    | 32              | Ed25519 public key of the node                           |
 | timestamp     | 4               | unix timestamp of advertisement                          |
 | signature     | 64              | Ed25519 signature of public key, timestamp, and app data |
 | appdata       | rest of payload | optional, see below                                      |
@@ -29,28 +36,38 @@ Appdata
 | Field         | Size (bytes)    | Description                                           |
 |---------------|-----------------|-------------------------------------------------------|
 | flags         | 1               | specifies which of the fields are present, see below  |
-| latitude      | 4               | decimal latitude multiplied by 1000000, integer       |
-| longitude     | 4               | decimal longitude multiplied by 1000000, integer      |
-| feature 1     | 2               | reserved for future use                               |
-| feature 2     | 2               | reserved for future use                               |
+| latitude      | 4 (optional)    | decimal latitude multiplied by 1000000, integer       |
+| longitude     | 4 (optional)    | decimal longitude multiplied by 1000000, integer      |
+| feature 1     | 2  (optional)   | reserved for future use                               |
+| feature 2     | 2  (optional)   | reserved for future use                               |
 | name          | rest of appdata | name of the node                                      |
 
 Appdata Flags
 
-| Value  | Name      | Description                           |
-|--------|-----------|---------------------------------------|
-| `0x10` | location  | appdata contains lat/long information |
-| `0x20` | feature 1 | Reserved for future use.              |
-| `0x40` | feature 2 | Reserved for future use.              |
-| `0x80` | name      | appdata contains a node name          |
+| Value  | Name           | Description                           |
+|--------|----------------|---------------------------------------|
+| `0x01` | is chat node   | advert is for a chat node             |
+| `0x02` | is repeater    | advert is for a repeater              |
+| `0x03` | is room server | advert is for a room server           |
+| `0x04` | is sensor      | advert is for a sensor server         |
+| `0x10` | has location   | appdata contains lat/long information |
+| `0x20` | has feature 1  | Reserved for future use.              |
+| `0x40` | has feature 2  | Reserved for future use.              |
+| `0x80` | has name       | appdata contains a node name          |
 
 # Acknowledgement
+
+An acknowledgement that a message was received. Note that for returned path messages, an acknowledgement will be sent in the "extra" payload (see [Returned Path](#returned-path)) and not as a discrete ackowledgement. CLI commands do not require an acknowledgement, neither discrete nor extra.
+
 | Field    | Size (bytes) | Description                                                |
 |----------|--------------|------------------------------------------------------------|
 | checksum | 4            | CRC checksum of message timestamp, text, and sender pubkey |
 
 
 # Returned path, request, response, and plain text message
+
+Returned path, request, response, and plain text messages are all formatted in the same way. See the subsection for more details about the ciphertext's associated plaintext representation.
+
 | Field            | Size (bytes)    | Description                                          |
 |------------------|-----------------|------------------------------------------------------|
 | destination hash | 1               | first byte of destination node public key            |
@@ -60,11 +77,13 @@ Appdata Flags
 
 ## Returned path
 
+Returned path messages provide a description of the route a packet took from the original author. Receivers will send returned path messages to the author of the original message.
+
 | Field       | Size (bytes) | Description                                                                                  |
 |-------------|--------------|----------------------------------------------------------------------------------------------|
 | path length | 1            | length of next field                                                                         |
-| path        | see above    | a list of node hashes (one byte each) describing the route from us to the packet author      |
-| extra type  | 1            | extra, bundled payload type, eg., acknowledgement or response. See packet structure spec     |
+| path        | see above    | a list of node hashes (one byte each) |
+| extra type  | 1            | extra, bundled payload type, eg., acknowledgement or response. Same values as in [packet structure](./packet_structure.md) |
 | extra       | rest of data | extra, bundled payload content, follows same format as main content defined by this document |
 
 ## Request
@@ -77,13 +96,15 @@ Appdata Flags
 
 Request type
 
-| Value  | Name               | Description                           |
-|--------|--------------------|---------------------------------------|
-| `0x01` | get status         | get status of repeater or room server |
-| `0x02` | keepalive          | TODO |
-| `0x03` | get telemetry data | TODO |
+| Value  | Name                 | Description                           |
+|--------|----------------------|---------------------------------------|
+| `0x01` | get stats            | get stats of repeater or room server  |
+| `0x02` | keepalive            | (deprecated) |
+| `0x03` | get telemetry data   | TODO |
+| `0x04` | get min,max,avg data | sensor nodes - get min, max, average for given time span |
+| `0x05` | get access list      | get node's approved access list       |
 
-### Get status
+### Get stats
 
 Gets information about the node, possibly including the following:
 
@@ -106,10 +127,6 @@ Gets information about the node, possibly including the following:
 * Number posted (?)
 * Number of post pushes (?)
 
-### Keepalive
-
-No-op request.
-
 ### Get telemetry data
 
 Request data about sensors on the node, including battery level.
@@ -123,11 +140,11 @@ Request data about sensors on the node, including battery level.
 
 ## Plain text message
 
-| Field        | Size (bytes)    | Description                                                  |
-|--------------|-----------------|--------------------------------------------------------------|
-| timestamp    | 4               | send time (unix timestamp)                                   |
-| flags + TODO | 1               | first six bits are flags (see below), last two bits are TODO |
-| message      | rest of payload | the message content, see next table                          |
+| Field           | Size (bytes)    | Description                                                  |
+|-----------------|-----------------|--------------------------------------------------------------|
+| timestamp       | 4               | send time (unix timestamp)                                   |
+| flags + attempt | 1               | upper six bits are flags (see below), lower two bits are attempt number (0..3) |
+| message         | rest of payload | the message content, see next table                          |
 
 Flags
 
@@ -135,7 +152,7 @@ Flags
 |--------|---------------------------|------------------------------------------------------------|
 | `0x00` | plain text message        | the plain text of the message                              |
 | `0x01` | CLI command               | the command text of the message                            |
-| `0x02` | signed plain text message | two bytes of sender prefix, followed by plain text message |
+| `0x02` | signed plain text message | first four bytes is sender pubkey prefix, followed by plain text message |
 
 # Anonymous request
 
@@ -151,23 +168,19 @@ Plaintext message
 | Field          | Size (bytes)    | Description                                                                   |
 |----------------|-----------------|-------------------------------------------------------------------------------|
 | timestamp      | 4               | send time (unix timestamp)                                                    |
-| sync timestamp | 4               | for room server, otherwise absent: sender's "sync messages SINCE x" timestamp |
+| sync timestamp | 4               | NOTE: room server only! - sender's "sync messages SINCE x" timestamp |
 | password       | rest of message | password for repeater/room                                                    |
 
 # Group text message / datagram
 
-| Field        | Size (bytes)    | Description                              |
-|--------------|-----------------|------------------------------------------|
-| channel hash | 1               | TODO                                     | 
-| cipher MAC   | 2               | MAC for encrypted data in next field     |
-| ciphertext   | rest of payload | encrypted message, see below for details |
+| Field        | Size (bytes)    | Description                                |
+|--------------|-----------------|--------------------------------------------|
+| channel hash | 1               | first byte of SHA256 of channel's shared key  |
+| cipher MAC   | 2               | MAC for encrypted data in next field       |
+| ciphertext   | rest of payload | encrypted message, see below for details   |
 
-Plaintext for text message
+The plaintext contained in the ciphertext matches the format described in [plain text message](#plain-text-message). Specifically, it consists of a four byte timestamp, a flags byte, and the message. The flags byte will generally be `0x00` because it is a "plain text message". The message will be of the form `<sender name>: <message body>` (eg., `user123: I'm on my way`).
 
-| Field     | Size (bytes)    | Description                      |
-|-----------|-----------------|----------------------------------|
-| timestamp | 4               | send time (unix timestamp)       |
-| content   | rest of message | plain group text message content |
 
 TODO: describe what datagram looks like
 

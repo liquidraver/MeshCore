@@ -21,10 +21,11 @@ struct NodePrefs {  // persisted to file
     uint8_t sf;
     uint8_t cr;
     uint8_t allow_read_only;
-    uint8_t reserved2;
+    uint8_t multi_acks;
     float bw;
     uint8_t flood_max;
     uint8_t interference_threshold;
+    uint8_t agc_reset_interval;   // secs / 4
 };
 
 class CommonCLICallbacks {
@@ -42,8 +43,13 @@ public:
   virtual void dumpLogFile() = 0;
   virtual void setTxPower(uint8_t power_dbm) = 0;
   virtual void formatNeighborsReply(char *reply) = 0;
-  virtual const uint8_t* getSelfIdPubKey() = 0;
+  virtual void removeNeighbor(const uint8_t* pubkey, int key_len) {
+    // no op by default
+  };
+  virtual mesh::LocalIdentity& getSelfId() = 0;
+  virtual void saveIdentity(const mesh::LocalIdentity& new_id) = 0;
   virtual void clearStats() = 0;
+  virtual void applyTempRadioParams(float freq, float bw, uint8_t sf, uint8_t cr, int timeout_mins) = 0;
 };
 
 class CommonCLI {
@@ -51,13 +57,10 @@ class CommonCLI {
   NodePrefs* _prefs;
   CommonCLICallbacks* _callbacks;
   mesh::MainBoard* _board;
-  char tmp[80];
+  char tmp[PRV_KEY_SIZE*2 + 4];
 
   mesh::RTCClock* getRTCClock() { return _rtc; }
-  void savePrefs() { _callbacks->savePrefs(); }
-
-  void checkAdvertInterval();
-
+  void savePrefs();
   void loadPrefsInt(FILESYSTEM* _fs, const char* filename);
 
 public:

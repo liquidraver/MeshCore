@@ -34,6 +34,8 @@ void NanoG2Ultra::begin()
   pinMode(EXT_NOTIFY_OUT, OUTPUT);
   digitalWrite(EXT_NOTIFY_OUT, LOW);
 
+  pinMode(GPS_EN, OUTPUT); // Initialize GPS power pin
+  
   Wire.begin();
   pinMode(SX126X_POWER_EN, OUTPUT);
   digitalWrite(SX126X_POWER_EN, HIGH);
@@ -68,7 +70,7 @@ bool NanoG2Ultra::startOTAUpdate(const char *id, char reply[])
   // Set max power. Accepted values are: -40, -30, -20, -16, -12, -8, -4, 0, 4
   Bluefruit.setTxPower(4);
   // Set the BLE device name
-  Bluefruit.setName("TECHO_OTA");
+  Bluefruit.setName("NANO_G2_OTA");
 
   Bluefruit.Periph.setConnectCallback(connect_callback);
   Bluefruit.Periph.setDisconnectCallback(disconnect_callback);

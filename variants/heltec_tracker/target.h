@@ -2,14 +2,15 @@
 
 #define RADIOLIB_STATIC_ONLY 1
 #include <RadioLib.h>
-#include <helpers/RadioLibWrappers.h>
+#include <helpers/radiolib/RadioLibWrappers.h>
 #include <helpers/HeltecV3Board.h>
-#include <helpers/CustomSX1262Wrapper.h>
+#include <helpers/radiolib/CustomSX1262Wrapper.h>
 #include <helpers/AutoDiscoverRTCClock.h>
 #include <helpers/SensorManager.h>
 #include <helpers/sensors/LocationProvider.h>
 #ifdef DISPLAY_CLASS
   #include <helpers/ui/ST7735Display.h>
+  #include <helpers/ui/MomentaryButton.h>
 #endif
 
 class HWTSensorManager : public SensorManager {
@@ -36,6 +37,7 @@ extern HWTSensorManager sensors;
 
 #ifdef DISPLAY_CLASS
   extern DISPLAY_CLASS display;
+  extern MomentaryButton user_btn;
 #endif
 
 bool radio_init();

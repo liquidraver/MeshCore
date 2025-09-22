@@ -3,6 +3,7 @@
 # usage
 # sh build.sh build-firmware RAK_4631_Repeater
 # sh build.sh build-firmwares
+# sh build.sh build-matching-firmwares RAK_4631
 # sh build.sh build-companion-firmwares
 # sh build.sh build-repeater-firmwares
 # sh build.sh build-room-server-firmwares
@@ -59,7 +60,7 @@ build_firmware() {
 
   # build .uf2 for nrf52 boards
   if [[ -f .pio/build/$1/firmware.zip && -f .pio/build/$1/firmware.hex ]]; then
-    python bin/uf2conv/uf2conv.py .pio/build/$1/firmware.hex -c -o .pio/build/$1/firmware.uf2 -f 0xADA52840
+    python3 bin/uf2conv/uf2conv.py .pio/build/$1/firmware.hex -c -o .pio/build/$1/firmware.uf2 -f 0xADA52840
   fi
 
   # copy .bin, .uf2, and .zip to out folder
@@ -144,6 +145,16 @@ mkdir -p out
 if [[ $1 == "build-firmware" ]]; then
   if [ "$2" ]; then
     build_firmware $2
+  else
+    echo "usage: $0 build-firmware <target>"
+    exit 1
+  fi
+elif [[ $1 == "build-matching-firmwares" ]]; then
+  if [ "$2" ]; then
+     build_all_firmwares_matching $2
+  else
+     echo "usage: $0 build-matching-firmwares <build-match-spec>"
+    exit 1
   fi
 elif [[ $1 == "build-firmwares" ]]; then
   build_firmwares
