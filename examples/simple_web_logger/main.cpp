@@ -48,7 +48,7 @@
 #endif
 
 #ifndef MAX_CONTACTS
-  #define MAX_CONTACTS         100
+  #define MAX_CONTACTS         300
 #endif
 
 #include <helpers/BaseChatMesh.h>
