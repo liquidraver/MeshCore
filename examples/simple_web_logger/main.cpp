@@ -469,7 +469,7 @@ protected:
     }
   }
 
-  void onDiscoveredContact(ContactInfo& contact, bool is_new) override {
+  void onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) override {
     saveContacts();
   }
 
