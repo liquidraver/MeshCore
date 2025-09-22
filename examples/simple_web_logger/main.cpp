@@ -422,7 +422,6 @@ protected:
 
     if (!from) {
       Serial.println("ERROR: onAdvertRecv: Contact not found!");
-      return;
     }
 
     AdvertDataParser parser(app_data, app_data_len);
@@ -464,7 +463,7 @@ protected:
 
     // Serial prints
     if (debugPrint()) {
-      Serial.printf("ADVERT from -> %s (%s)\n", parser.getName(), from->name);
+      Serial.printf("ADVERT from -> %s\n", parser.getName());
       Serial.printf("  lat:       %.6f\n", parser.getIntLat() / 1000000.0);
       Serial.printf("  lon:       %.6f\n", parser.getIntLon() / 1000000.0);
     }
