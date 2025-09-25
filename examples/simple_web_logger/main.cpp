@@ -514,6 +514,8 @@ protected:
   }
 
   void onMessageRecv(const ContactInfo& from, mesh::Packet* pkt, uint32_t sender_timestamp, const char *text) override {
+    Serial.printf("[DEBUG] onMessageRecv called with text: '%s'\n", text);
+    
     uint8_t hash[MAX_HASH_SIZE];
     pkt->calculatePacketHash(hash);
 
@@ -582,6 +584,8 @@ protected:
   }
 
   void onChannelMessageRecv(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t timestamp, const char *text) override {
+    Serial.printf("[DEBUG] onChannelMessageRecv called with text: '%s'\n", text);
+    
     uint8_t hash[MAX_HASH_SIZE];
     pkt->calculatePacketHash(hash);
 
