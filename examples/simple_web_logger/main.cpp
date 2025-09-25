@@ -22,7 +22,7 @@
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/StaticPoolPacketManager.h>
 #include <helpers/IdentityStore.h>
-// #include <helpers/pingpong.h>  // COMMENTED OUT FOR TESTING
+#include <helpers/pingpong.h>
 #include <RTClib.h>
 #include <target.h>
 
@@ -69,7 +69,7 @@
 #define  PUBLIC_GROUP_PSK "izOH6cXN6mrJ5e26oRXNcg=="
 
 static bool ntpSynced = false;
-const char* ntpServer = "pool.ntp.org";
+const char* ntpServer = "91.82.109.180";
 const long  gmtOffset_sec = 60 * 60 * 3;
 const int   daylightOffset_sec = 3600;
 const unsigned long ntpSyncInterval = 5 * 60 * 1000;
@@ -556,14 +556,14 @@ protected:
     // Serial prints
     Serial.printf("*** MODIFIED MESSAGE from -> %s ***\n", from.name);
 
-    // Check for ping message and send pong response
+        // Check for ping message and send pong response
 #ifdef PINGPONG_ENABLED
-    Serial.println("[DEBUG] PINGPONG_ENABLED is defined, but NOT calling PingPongHelper for testing");
-    // if (PingPongHelper::processMessage(*this, from, pkt, sender_timestamp, text)) {
-    //   Serial.println("   Sent pong response!");
-    // }
+        Serial.println("[DEBUG] PINGPONG_ENABLED is defined, calling PingPongHelper");
+        if (PingPongHelper::processMessage(*this, from, pkt, sender_timestamp, text)) {
+          Serial.println("   Sent pong response!");
+        }
 #else
-    Serial.println("[DEBUG] PINGPONG_ENABLED is NOT defined");
+        Serial.println("[DEBUG] PINGPONG_ENABLED is NOT defined");
 #endif
 
     // Special commands
@@ -627,15 +627,47 @@ protected:
 
     Serial.printf("   %s\n", text);
 
-    // Check for ping message in channel and send pong response
+        // Check for ping message in channel and send pong response
 #ifdef PINGPONG_ENABLED
-    Serial.println("[DEBUG] PINGPONG_ENABLED is defined, but NOT checking channel message for testing");
-    // COMMENTED OUT FOR TESTING:
-    // if (PingPongHelper::isPingMessage(text)) {
-    //   // ... entire ping-pong logic commented out ...
-    // }
+        Serial.println("[DEBUG] PINGPONG_ENABLED is defined, checking channel message");
+        if (PingPongHelper::isPingMessage(text)) {
+          Serial.println("[DEBUG] Detected ping message in channel");
+          
+          // For channel messages, we don't have direct sender info, so use a generic response
+          char sender_name[32] = "Unknown";
+          
+          // Get RSSI from radio
+          float rssi = 0.0;
+          if (getRadio()) {
+            rssi = getRadio()->getLastRSSI();
+          }
+          
+          // Generate pong response
+          char response[256];
+          char router_ids_buffer[256];
+          uint8_t hop_count = pkt->path_len;
+          
+          // Extract path info
+          if (PingPongHelper::extractPathInfo(pkt, hop_count, router_ids_buffer, sizeof(router_ids_buffer))) {
+            if (PingPongHelper::generatePongResponse(sender_name, hop_count, router_ids_buffer, 
+                                                     pkt->_snr, rssi, response, sizeof(response))) {
+              Serial.printf("[DEBUG] Generated pong response: %s\n", response);
+              
+              // Send pong response to the channel
+              if (sendGroupMessage(timestamp, const_cast<mesh::GroupChannel&>(channel), "PingPong", response, strlen(response))) {
+                Serial.println("[DEBUG] Sent pong response to channel");
+              } else {
+                Serial.println("[DEBUG] Failed to send pong response to channel");
+              }
+            } else {
+              Serial.println("[DEBUG] Failed to generate pong response");
+            }
+          } else {
+            Serial.println("[DEBUG] Failed to extract path info");
+          }
+        }
 #else
-    Serial.println("[DEBUG] PINGPONG_ENABLED is NOT defined for channel");
+        Serial.println("[DEBUG] PINGPONG_ENABLED is NOT defined for channel");
 #endif
   }
   
@@ -745,8 +777,15 @@ public:
     }
 
     loadContacts();
-    loadChannels();
+    loadChannels();  // Load existing channels from flash first
     _public = addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
+
+    // Add additional channels
+    // Correct base64 conversion of hex PSK: 26c7168483fad33f45cb72092ab148642 -> JscWhIP60z9Fy3IJKrFIZA==
+    addChannel("Hungary", "JscWhIP60z9Fy3IJKrFIZA==");  // Hungary channel
+
+    // Save channels to flash so they persist
+    saveChannels();
 
     toggleWiFi(true);
   }

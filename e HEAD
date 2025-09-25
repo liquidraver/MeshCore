@@ -1,0 +1,43 @@
+[33m211cf00[m initial support for xiao_c6
+[33mf7e79ad[m re-introduce tlora c6 with fixed arduino versions
+[33m572dc56[m Merge branch 'ripplebiz:dev' into dev
+[33m0de12b0[m Merge branch 'ripplebiz:dev' into dev
+[33mbb1e5c5[m nrf52 fix: don't allow LFS_ASSERT to freeze the board
+[33m7deb828[m Merge branch 'ripplebiz:dev' into dev
+[33m9d1c855[m Merge branch 'ripplebiz:dev' into dev
+[33m7525877[m[33m ([m[1;31mrecrof/patch-4[m[33m)[m add mising config for `openocd_target`
+[33m1bc94c2[m minor companion ui fixes
+[33m42ef297[m set text width ahead of width calculation
+[33mdafb5d3[m * added repeater target for Heltec-CT62
+[33mfd4885e[m * HT-CT62 SPI fixes
+[33m4679b03[m Merge branch 'ripplebiz:dev' into dev
+[33me44f1ee[m fix duplicate flag
+[33m71982d4[m Merge branch 'dev' of github.com:recrof/MeshCore into dev
+[33m7c01132[m feedback
+[33mf208f04[m ct62: adding companion radios
+[33m516f6a3[m[33m ([m[1;31mrecrof/patch-6[m[33m)[m Add companion roles to Station G2
+[33mc5869c7[m Merge pull request #382 from fdlamotte/ct62_usb_companion
+[33mc6f6e08[m * some HT-CT62 fixes
+[33m3f0c89d[m Merge pull request #379 from jquatier/ui-fixes
+[33me1ceaab[m add TX led to thinknode M1
+[33maa230d2[m Merge pull request #386 from jquatier/thinknode-led
+[33mdeaa0ec[m Create packet_structure.md
+[33ma2a9455[m corrections and style
+[33mfca86d9[m Added support for t3s3 sx1276
+[33mf7dcf01[m Merge pull request #378 from recrof/patch-4
+[33m32ca3dc[m * repeater and room server: new CLI setting "agc.reset.interval" (seconds)
+[33m466bd6d[m * fix for when AGC reset is disabled (interval = 0)
+[33m8a7ec9d[m * interference threshold now disabled by default
+[33ma9ea710[m Merge branch 'ripplebiz:dev' into dev
+[33m7fffe77[m Update faq.md
+[33m5b1c7fe[m Merge pull request #391 from LitBomb/patch-13
+[33m8f6b2b7[m Waveshare RP2040-LoRa board support
+[33m52acae1[m Set default upload protocol
+[33m3448db6[m Rename LED pin
+[33m7175dec[m Merge pull request #380 from recrof/dev
+[33m0f9efa2[m * room server: suggested keep_alive interval now disabled
+[33m5c6f345[m t1000e: don't update position if gps is off
+[33mf3e85a6[m Update SX126X_CURRENT_LIMIT
+[33m110bd49[m VBAT schematic
+[33m24464d0[m Update VBAT schematic
+[33mec712c4[m Merge pull request #384 from recrof/patch-6

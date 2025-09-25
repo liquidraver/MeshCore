@@ -85,20 +85,51 @@ bool PingPongHelper::extractPathInfo(const mesh::Packet* packet, uint8_t& hop_co
     return true;
 }
 
-bool PingPongHelper::processMessage(BaseChatMesh& mesh, const ContactInfo& from, 
-                                  mesh::Packet* packet, uint32_t sender_timestamp, const char* text) {
-    // MINIMAL TEST: Just check if it's a ping message and return immediately
-    Serial.printf("[PINGPONG] MINIMAL TEST: Received message: '%s'\n", text);
-    
+bool PingPongHelper::processMessage(BaseChatMesh& mesh, const ContactInfo& from,
+                                   mesh::Packet* packet, uint32_t sender_timestamp, const char* text) {
+    Serial.printf("[PINGPONG] Received message: '%s'\n", text);
+
     if (!isPingMessage(text)) {
-        Serial.printf("[PINGPONG] MINIMAL TEST: Not a ping message\n");
+        Serial.printf("[PINGPONG] Not a ping message\n");
+        return false;
+    }
+
+    Serial.printf("[PINGPONG] Detected ping message from %s\n", from.name);
+
+    // Extract path information
+    uint8_t hop_count = packet->path_len;
+    char router_ids_buffer[256];
+    
+    if (!extractPathInfo(packet, hop_count, router_ids_buffer, sizeof(router_ids_buffer))) {
+        Serial.println("[PINGPONG] Failed to extract path info");
         return false;
     }
     
-    Serial.printf("[PINGPONG] MINIMAL TEST: Detected ping message from %s\n", from.name);
-    Serial.printf("[PINGPONG] MINIMAL TEST: Returning true without doing anything else\n");
-    
-    return true;  // Return true to indicate we "processed" the message
+    // Get RSSI from radio
+    float rssi = 0.0;
+    if (mesh.getRadio()) {
+        rssi = mesh.getRadio()->getLastRSSI();
+    }
+
+    // Generate pong response
+    char response[256];
+    if (generatePongResponse(from.name, hop_count, router_ids_buffer, packet->_snr, rssi, response, sizeof(response))) {
+        Serial.printf("[PINGPONG] Generated response: %s\n", response);
+        
+        // Send pong response
+        uint32_t expected_ack, est_timeout;
+        int result = mesh.sendMessage(from, 0, 0, response, expected_ack, est_timeout);
+        if (result == 0) {
+            Serial.println("[PINGPONG] Sent pong response successfully");
+            return true;
+        } else {
+            Serial.printf("[PINGPONG] Failed to send pong response, result: %d\n", result);
+            return false;
+        }
+    } else {
+        Serial.println("[PINGPONG] Failed to generate pong response");
+        return false;
+    }
 }
 
 #endif // PINGPONG_ENABLED
