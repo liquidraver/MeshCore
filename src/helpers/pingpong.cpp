@@ -87,9 +87,14 @@ bool PingPongHelper::extractPathInfo(const mesh::Packet* packet, uint8_t& hop_co
 
 bool PingPongHelper::processMessage(BaseChatMesh& mesh, const ContactInfo& from, 
                                   mesh::Packet* packet, uint32_t sender_timestamp, const char* text) {
+    Serial.printf("[PINGPONG] Received message: '%s'\n", text);
+    
     if (!isPingMessage(text)) {
+        Serial.printf("[PINGPONG] Not a ping message\n");
         return false;
     }
+    
+    Serial.printf("[PINGPONG] Detected ping message from %s\n", from.name);
     
     // Extract path information
     uint8_t hop_count;
@@ -106,8 +111,11 @@ bool PingPongHelper::processMessage(BaseChatMesh& mesh, const ContactInfo& from,
     // Generate pong response
     char response[128];
     if (!generatePongResponse(from.name, hop_count, router_ids, snr, rssi, response, sizeof(response))) {
+        Serial.printf("[PINGPONG] Failed to generate pong response\n");
         return false;
     }
+    
+    Serial.printf("[PINGPONG] Generated response: '%s'\n", response);
     
     // Send the pong response
     uint32_t est_timeout;
@@ -115,6 +123,12 @@ bool PingPongHelper::processMessage(BaseChatMesh& mesh, const ContactInfo& from,
     
     int result = mesh.sendMessage(from, mesh.getRTCClock()->getCurrentTime(), 0, 
                                 response, expected_ack_crc, est_timeout);
+    
+    if (result != MSG_SEND_FAILED) {
+        Serial.printf("[PINGPONG] Successfully sent pong response\n");
+    } else {
+        Serial.printf("[PINGPONG] Failed to send pong response\n");
+    }
     
     return result != MSG_SEND_FAILED;
 }
