@@ -101,7 +101,7 @@ bool PingPongHelper::processMessage(BaseChatMesh& mesh, const ContactInfo& from,
     
     // Get SNR and RSSI from packet and radio
     float snr = packet->getSNR();
-    float rssi = mesh.getRadio().getLastRSSI();
+    float rssi = mesh.getRadio()->getLastRSSI();
     
     // Generate pong response
     char response[128];
