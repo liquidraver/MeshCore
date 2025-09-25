@@ -558,10 +558,10 @@ protected:
 
     // Check for ping message and send pong response
 #ifdef PINGPONG_ENABLED
-    Serial.println("[DEBUG] PINGPONG_ENABLED is defined, calling PingPongHelper");
-    if (PingPongHelper::processMessage(*this, from, pkt, sender_timestamp, text)) {
-      Serial.println("   Sent pong response!");
-    }
+    Serial.println("[DEBUG] PINGPONG_ENABLED is defined, but NOT calling PingPongHelper for testing");
+    // if (PingPongHelper::processMessage(*this, from, pkt, sender_timestamp, text)) {
+    //   Serial.println("   Sent pong response!");
+    // }
 #else
     Serial.println("[DEBUG] PINGPONG_ENABLED is NOT defined");
 #endif
@@ -629,49 +629,11 @@ protected:
 
     // Check for ping message in channel and send pong response
 #ifdef PINGPONG_ENABLED
-    Serial.println("[DEBUG] PINGPONG_ENABLED is defined, checking channel message");
-    if (PingPongHelper::isPingMessage(text)) {
-      // Extract sender name from channel message format "SenderName: message"
-      const char* colon_pos = strchr(text, ':');
-      if (colon_pos) {
-        // Create a temporary ContactInfo for the sender
-        ContactInfo temp_contact;
-        memset(&temp_contact, 0, sizeof(temp_contact));
-        
-        // Extract sender name (everything before the colon)
-        size_t name_len = colon_pos - text;
-        if (name_len > 0 && name_len < sizeof(temp_contact.name)) {
-          strncpy(temp_contact.name, text, name_len);
-          temp_contact.name[name_len] = '\0';
-          
-          // Generate pong response
-          uint8_t hop_count;
-          char router_ids[64];
-          if (PingPongHelper::extractPathInfo(pkt, hop_count, router_ids, sizeof(router_ids))) {
-            char response[128];
-            float snr = pkt->getSNR();
-            float rssi = getRadio()->getLastRSSI();
-            if (PingPongHelper::generatePongResponse(temp_contact.name, hop_count, router_ids, snr, rssi, response, sizeof(response))) {
-              // Send as public channel message
-              uint8_t temp[5+MAX_TEXT_LEN+32];
-              uint32_t timestamp_now = getRTCClock()->getCurrentTime();
-              memcpy(temp, &timestamp_now, 4);
-              temp[4] = 0;
-              
-              sprintf((char *) &temp[5], "%s: %s", _prefs.node_name, response);
-              temp[5 + MAX_TEXT_LEN] = 0;
-              
-              int len = strlen((char *) &temp[5]);
-              auto pkt_response = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, temp, 5 + len);
-              if (pkt_response) {
-                sendFlood(pkt_response);
-                Serial.println("   Sent pong response to channel!");
-              }
-            }
-          }
-        }
-      }
-    }
+    Serial.println("[DEBUG] PINGPONG_ENABLED is defined, but NOT checking channel message for testing");
+    // COMMENTED OUT FOR TESTING:
+    // if (PingPongHelper::isPingMessage(text)) {
+    //   // ... entire ping-pong logic commented out ...
+    // }
 #else
     Serial.println("[DEBUG] PINGPONG_ENABLED is NOT defined for channel");
 #endif
