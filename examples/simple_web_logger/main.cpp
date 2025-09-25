@@ -549,7 +549,7 @@ protected:
     messageQueue.push(doc);
 
     // Serial prints
-    Serial.printf("MESSAGE from -> %s\n", from.name);
+    Serial.printf("*** MODIFIED MESSAGE from -> %s ***\n", from.name);
 
     // Check for ping message and send pong response
 #ifdef PINGPONG_ENABLED
