@@ -516,6 +516,7 @@ protected:
   void onMessageRecv(const ContactInfo& from, mesh::Packet* pkt, uint32_t sender_timestamp, const char *text) override {
     Serial.println("*** DEBUG: onMessageRecv START ***");
     Serial.printf("[DEBUG] onMessageRecv called with text: '%s'\n", text);
+    Serial.printf("[DEBUG] from.name: '%s'\n", from.name);
     
     uint8_t hash[MAX_HASH_SIZE];
     pkt->calculatePacketHash(hash);
