@@ -22,7 +22,7 @@
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/StaticPoolPacketManager.h>
 #include <helpers/IdentityStore.h>
-#include <helpers/pingpong.h>
+// #include <helpers/pingpong.h>  // COMMENTED OUT FOR TESTING
 #include <RTClib.h>
 #include <target.h>
 
