@@ -117,20 +117,11 @@ bool PingPongHelper::processMessage(BaseChatMesh& mesh, const ContactInfo& from,
     
     Serial.printf("[PINGPONG] Generated response: '%s'\n", response);
     
-    // Send the pong response
-    uint32_t est_timeout;
-    uint32_t expected_ack_crc;
+    // TEST: Don't actually send the pong response, just log it
+    Serial.printf("[PINGPONG] TEST: Would send response: '%s'\n", response);
+    Serial.printf("[PINGPONG] TEST: Not actually sending to avoid issues\n");
     
-    int result = mesh.sendMessage(from, mesh.getRTCClock()->getCurrentTime(), 0, 
-                                response, expected_ack_crc, est_timeout);
-    
-    if (result != MSG_SEND_FAILED) {
-        Serial.printf("[PINGPONG] Successfully sent pong response\n");
-    } else {
-        Serial.printf("[PINGPONG] Failed to send pong response\n");
-    }
-    
-    return result != MSG_SEND_FAILED;
+    return true;  // Return true to indicate we "processed" the message
 }
 
 #endif // PINGPONG_ENABLED
