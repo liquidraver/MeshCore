@@ -87,39 +87,16 @@ bool PingPongHelper::extractPathInfo(const mesh::Packet* packet, uint8_t& hop_co
 
 bool PingPongHelper::processMessage(BaseChatMesh& mesh, const ContactInfo& from, 
                                   mesh::Packet* packet, uint32_t sender_timestamp, const char* text) {
-    Serial.printf("[PINGPONG] Received message: '%s'\n", text);
+    // MINIMAL TEST: Just check if it's a ping message and return immediately
+    Serial.printf("[PINGPONG] MINIMAL TEST: Received message: '%s'\n", text);
     
     if (!isPingMessage(text)) {
-        Serial.printf("[PINGPONG] Not a ping message\n");
+        Serial.printf("[PINGPONG] MINIMAL TEST: Not a ping message\n");
         return false;
     }
     
-    Serial.printf("[PINGPONG] Detected ping message from %s\n", from.name);
-    
-    // Extract path information
-    uint8_t hop_count;
-    char router_ids[64];
-    
-    if (!extractPathInfo(packet, hop_count, router_ids, sizeof(router_ids))) {
-        return false;
-    }
-    
-    // Get SNR and RSSI from packet and radio
-    float snr = packet->getSNR();
-    float rssi = mesh.getRadio()->getLastRSSI();
-    
-    // Generate pong response
-    char response[128];
-    if (!generatePongResponse(from.name, hop_count, router_ids, snr, rssi, response, sizeof(response))) {
-        Serial.printf("[PINGPONG] Failed to generate pong response\n");
-        return false;
-    }
-    
-    Serial.printf("[PINGPONG] Generated response: '%s'\n", response);
-    
-    // TEST: Don't actually send the pong response, just log it
-    Serial.printf("[PINGPONG] TEST: Would send response: '%s'\n", response);
-    Serial.printf("[PINGPONG] TEST: Not actually sending to avoid issues\n");
+    Serial.printf("[PINGPONG] MINIMAL TEST: Detected ping message from %s\n", from.name);
+    Serial.printf("[PINGPONG] MINIMAL TEST: Returning true without doing anything else\n");
     
     return true;  // Return true to indicate we "processed" the message
 }
