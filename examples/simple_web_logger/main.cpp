@@ -542,9 +542,12 @@ protected:
 
     // Check for ping message and send pong response
 #ifdef PINGPONG_ENABLED
+    Serial.println("[DEBUG] PINGPONG_ENABLED is defined, calling PingPongHelper");
     if (PingPongHelper::processMessage(*this, from, pkt, sender_timestamp, text)) {
       Serial.println("   Sent pong response!");
     }
+#else
+    Serial.println("[DEBUG] PINGPONG_ENABLED is NOT defined");
 #endif
 
     // Special commands
@@ -608,6 +611,7 @@ protected:
 
     // Check for ping message in channel and send pong response
 #ifdef PINGPONG_ENABLED
+    Serial.println("[DEBUG] PINGPONG_ENABLED is defined, checking channel message");
     if (PingPongHelper::isPingMessage(text)) {
       // Extract sender name from channel message format "SenderName: message"
       const char* colon_pos = strchr(text, ':');
@@ -650,6 +654,8 @@ protected:
         }
       }
     }
+#else
+    Serial.println("[DEBUG] PINGPONG_ENABLED is NOT defined for channel");
 #endif
   }
   
