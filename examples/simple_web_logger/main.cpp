@@ -32,6 +32,13 @@
 
 #define FIRMWARE_VER_TEXT   "v1.8.1"
 
+// Compile-time check for PINGPONG_ENABLED
+#ifdef PINGPONG_ENABLED
+  #pragma message("PINGPONG_ENABLED is defined!")
+#else
+  #pragma message("PINGPONG_ENABLED is NOT defined!")
+#endif
+
 #ifndef LORA_FREQ
   #define LORA_FREQ   915.0
 #endif
