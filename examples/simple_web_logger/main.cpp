@@ -373,6 +373,8 @@ protected:
   } 
 
   mesh::DispatcherAction onRecvPacket(mesh::Packet* pkt) override {
+    Serial.printf("[DEBUG] onRecvPacket called - header: %u, payload_len: %u\n", pkt->header, pkt->payload_len);
+    
     // send raw
     if (_logp.doraw) {
       int phType = (pkt->header >> PH_TYPE_SHIFT) & PH_TYPE_MASK;
@@ -419,7 +421,10 @@ protected:
       messageQueue.push(doc);
     }
 
-    return Mesh::onRecvPacket(pkt);
+    Serial.println("[DEBUG] Calling base class onRecvPacket");
+    mesh::DispatcherAction result = Mesh::onRecvPacket(pkt);
+    Serial.printf("[DEBUG] Base class onRecvPacket returned: %d\n", (int)result);
+    return result;
   }
 
   void onAdvertRecv(mesh::Packet* pkt, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len) {
