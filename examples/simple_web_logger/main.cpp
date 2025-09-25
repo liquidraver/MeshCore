@@ -650,7 +650,7 @@ protected:
           // Extract path info
           if (PingPongHelper::extractPathInfo(pkt, hop_count, router_ids_buffer, sizeof(router_ids_buffer))) {
             if (PingPongHelper::generatePongResponse(sender_name, hop_count, router_ids_buffer, 
-                                                     pkt->_snr, rssi, response, sizeof(response))) {
+                                                     pkt->_snr, rssi, true, response, sizeof(response))) {
               Serial.printf("[DEBUG] Generated pong response: %s\n", response);
               
               // Send pong response to the channel

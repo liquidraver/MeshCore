@@ -54,6 +54,41 @@ bool PingPongHelper::generatePongResponse(const char* sender_name, uint8_t hop_c
     return written > 0 && written < (int)buffer_size;
 }
 
+bool PingPongHelper::generatePongResponse(const char* sender_name, uint8_t hop_count, 
+                                        const char* router_ids, float snr, float rssi, bool is_channel_message,
+                                        char* response_buffer, size_t buffer_size) {
+    if (!sender_name || !router_ids || !response_buffer || buffer_size < 64) {
+        return false;
+    }
+    
+    int written;
+    if (hop_count == 0) {
+        // Direct message - include SNR and RSSI
+        if (is_channel_message) {
+            // Channel message format: @[SENDER_NAME] Pong! 0 hops (direct) [SNR: X.X dB, RSSI: XX dBm]
+            written = snprintf(response_buffer, buffer_size, "@[%s] Pong! 0 hops (direct) [SNR: %.1f dB, RSSI: %.0f dBm]", 
+                              sender_name, snr, rssi);
+        } else {
+            // Private message format: Pong! 0 hops (direct) [SNR: X.X dB, RSSI: XX dBm]
+            written = snprintf(response_buffer, buffer_size, "Pong! 0 hops (direct) [SNR: %.1f dB, RSSI: %.0f dBm]", 
+                              snr, rssi);
+        }
+    } else {
+        // Multi-hop message - no SNR/RSSI for individual hops
+        if (is_channel_message) {
+            // Channel message format: @[SENDER_NAME] Pong! X hops (router_ids)
+            written = snprintf(response_buffer, buffer_size, "@[%s] Pong! %d hops (%s)", 
+                              sender_name, hop_count, router_ids);
+        } else {
+            // Private message format: Pong! X hops (router_ids)
+            written = snprintf(response_buffer, buffer_size, "Pong! %d hops (%s)", 
+                              hop_count, router_ids);
+        }
+    }
+    
+    return written > 0 && written < (int)buffer_size;
+}
+
 bool PingPongHelper::extractPathInfo(const mesh::Packet* packet, uint8_t& hop_count, 
                                     char* router_ids_buffer, size_t buffer_size) {
     if (!packet || !router_ids_buffer || buffer_size < 16) {
@@ -113,7 +148,7 @@ bool PingPongHelper::processMessage(BaseChatMesh& mesh, const ContactInfo& from,
 
     // Generate pong response
     char response[256];
-    if (generatePongResponse(from.name, hop_count, router_ids_buffer, packet->_snr, rssi, response, sizeof(response))) {
+    if (generatePongResponse(from.name, hop_count, router_ids_buffer, packet->_snr, rssi, false, response, sizeof(response))) {
         Serial.printf("[PINGPONG] Generated response: %s\n", response);
         
         // Send pong response

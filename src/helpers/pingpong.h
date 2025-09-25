@@ -38,6 +38,22 @@ public:
                                    const char* router_ids, float snr, float rssi, char* response_buffer, size_t buffer_size);
     
     /**
+     * \brief Generate a pong response message with channel/private message format control
+     * \param sender_name The name of the sender to mention
+     * \param hop_count Number of hops the ping took
+     * \param router_ids Comma-separated router IDs from the path
+     * \param snr Signal-to-noise ratio (for direct messages)
+     * \param rssi Received signal strength indicator (for direct messages)
+     * \param is_channel_message Whether this is a channel message (affects format)
+     * \param response_buffer Buffer to store the response (must be at least 128 bytes)
+     * \param buffer_size Size of the response buffer
+     * \returns true if response was generated successfully
+     */
+    static bool generatePongResponse(const char* sender_name, uint8_t hop_count, 
+                                   const char* router_ids, float snr, float rssi, bool is_channel_message,
+                                   char* response_buffer, size_t buffer_size);
+    
+    /**
      * \brief Extract hop count and router IDs from a packet path
      * \param packet The packet to extract path information from
      * \param hop_count Output parameter for hop count
