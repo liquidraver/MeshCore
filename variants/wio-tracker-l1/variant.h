@@ -12,8 +12,8 @@
 
 #include "WVariant.h"
 
-#define PINS_COUNT              (33)
-#define NUM_DIGITAL_PINS        (33)
+#define PINS_COUNT              (38)
+#define NUM_DIGITAL_PINS        (38)
 #define NUM_ANALOG_INPUTS       (8)
 #define NUM_ANALOG_OUTPUTS      (0)
 
@@ -54,7 +54,7 @@
 #define PIN_SERIAL1_TX          (6)
 
 // SPI Interfaces
-#define SPI_INTERFACES_COUNT    (1)
+#define SPI_INTERFACES_COUNT    (2)
 
 #define PIN_SPI_MISO            (9)
 #define PIN_SPI_MOSI            (10)
@@ -78,8 +78,8 @@
 
 #define PIN_WIRE_SDA            (14)
 #define PIN_WIRE_SCL            (15)
-#define PIN_WIRE1_SDA           (17)
-#define PIN_WIRE1_SCL           (18)
+#define PIN_WIRE1_SDA           (18)
+#define PIN_WIRE1_SCL           (17)
 #define I2C_NO_RESCAN
 #define DISPLAY_ADDRESS         0x3D  // SH1106 OLED I2C address
 
@@ -88,7 +88,7 @@
 #define PIN_GPS_TX              PIN_SERIAL1_RX
 #define PIN_GPS_RX              PIN_SERIAL1_TX
 #define PIN_GPS_STANDBY         (0)
-#define PIN_GPS_EN              (18)
+#define PIN_GPS_EN              (PIN_GPS_STANDBY)
 
 // QSPI Pins
 #define PIN_QSPI_SCK            (19)
@@ -100,5 +100,20 @@
 
 #define EXTERNAL_FLASH_DEVICES P25Q16H
 #define EXTERNAL_FLASH_USE_QSPI
+
+// EInk on SPI1
+#define PIN_DISPLAY_CS          (36)
+#define PIN_DISPLAY_BUSY        (35)
+#define PIN_DISPLAY_DC          (34)
+#define PIN_DISPLAY_RST         (32)
+
+#define PIN_SPI1_MISO           (37)
+#define PIN_SPI1_MOSI           (33)
+#define PIN_SPI1_SCK            (31)
+
+// GxEPD2 needs that for a panel that is not even used !
+extern const int MISO;
+extern const int MOSI;
+extern const int SCK;
 
 #endif

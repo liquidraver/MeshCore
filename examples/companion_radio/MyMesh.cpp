@@ -175,15 +175,34 @@ void MyMesh::updateContactFromFrame(ContactInfo &contact, uint32_t& last_mod, co
   }
 }
 
+bool MyMesh::Frame::isChannelMsg() const {
+  return buf[0] == RESP_CODE_CHANNEL_MSG_RECV || buf[0] == RESP_CODE_CHANNEL_MSG_RECV_V3;
+}
+
 void MyMesh::addToOfflineQueue(const uint8_t frame[], int len) {
   if (offline_queue_len >= OFFLINE_QUEUE_SIZE) {
-    MESH_DEBUG_PRINTLN("ERROR: offline_queue is full!");
+    MESH_DEBUG_PRINTLN("WARN: offline_queue is full!");
+    int pos = 0;
+    while (pos < offline_queue_len) {
+      if (offline_queue[pos].isChannelMsg()) {
+        for (int i = pos; i < offline_queue_len - 1; i++) { // delete oldest channel msg from queue
+          offline_queue[i] = offline_queue[i + 1];
+        }
+        MESH_DEBUG_PRINTLN("INFO: removed oldest channel message from queue.");
+        offline_queue[offline_queue_len - 1].len = len;
+        memcpy(offline_queue[offline_queue_len - 1].buf, frame, len);
+        return;
+      }
+      pos++;
+    }
+    MESH_DEBUG_PRINTLN("INFO: no channel messages to remove from queue.");
   } else {
     offline_queue[offline_queue_len].len = len;
     memcpy(offline_queue[offline_queue_len].buf, frame, len);
     offline_queue_len++;
   }
 }
+
 int MyMesh::getFromOfflineQueue(uint8_t frame[]) {
   if (offline_queue_len > 0) {         // check offline queue
     size_t len = offline_queue[0].len; // take from top of queue
@@ -243,7 +262,7 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
     }
   } else {
 #ifdef DISPLAY_CLASS
-    if (_ui) _ui->soundBuzzer(UIEventType::newContactMessage);
+    if (_ui) _ui->notify(UIEventType::newContactMessage);
 #endif
   }
 
@@ -294,7 +313,7 @@ void MyMesh::onContactPathUpdated(const ContactInfo &contact) {
   dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
 }
 
-bool MyMesh::processAck(const uint8_t *data) {
+ContactInfo*  MyMesh::processAck(const uint8_t *data) {
   // see if matches any in a table
   for (int i = 0; i < EXPECTED_ACK_TABLE_SIZE; i++) {
     if (memcmp(data, &expected_ack_table[i].ack, 4) == 0) { // got an ACK from recipient
@@ -306,7 +325,7 @@ bool MyMesh::processAck(const uint8_t *data) {
 
       // NOTE: the same ACK can be received multiple times!
       expected_ack_table[i].ack = 0; // clear expected hash, now that we have received ACK
-      return true;
+      return expected_ack_table[i].contact;
     }
   }
   return checkConnectionsAck(data);
@@ -353,7 +372,7 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
   if (should_display && _ui) {
     _ui->newMsg(path_len, from.name, text, offline_queue_len);
     if (!_serial->isConnected()) {
-      _ui->soundBuzzer(UIEventType::contactMessage);
+      _ui->notify(UIEventType::contactMessage);
     }
   }
 #endif
@@ -412,7 +431,7 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
     _serial->writeFrame(frame, 1);
   } else {
 #ifdef DISPLAY_CLASS
-    if (_ui) _ui->soundBuzzer(UIEventType::channelMessage);
+    if (_ui) _ui->notify(UIEventType::channelMessage);
 #endif
   }
 #ifdef DISPLAY_CLASS
@@ -496,6 +515,7 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
       memcpy(&out_frame[i], &tag, 4);
       i += 4; // NEW: include server timestamp
       out_frame[i++] = data[7]; // NEW (v7): ACL permissions
+      out_frame[i++] = data[12]; // FIRMWARE_VER_LEVEL
     } else {
       out_frame[i++] = PUSH_CODE_LOGIN_FAIL;
       out_frame[i++] = 0; // reserved
@@ -825,6 +845,7 @@ void MyMesh::handleCmdFrame(size_t len) {
         if (expected_ack) {
           expected_ack_table[next_ack_idx].msg_sent = _ms->getMillis(); // add to circular table
           expected_ack_table[next_ack_idx].ack = expected_ack;
+          expected_ack_table[next_ack_idx].contact = recipient;
           next_ack_idx = (next_ack_idx + 1) % EXPECTED_ACK_TABLE_SIZE;
         }
 
@@ -1524,33 +1545,72 @@ void MyMesh::checkCLIRescueCmd() {
 
       // get path from command e.g: "ls /adafruit"
       const char *path = &cli_command[3];
-      
+
+      bool is_fs2 = false;
+      if (memcmp(path, "UserData/", 9) == 0) {
+        path += 8; // skip "UserData"
+      } else if (memcmp(path, "ExtraFS/", 8) == 0) {
+        path += 7; // skip "ExtraFS"
+        is_fs2 = true;
+      }
+      Serial.printf("Listing files in %s\n", path);
+
       // log each file and directory
       File root = _store->openRead(path);
-      if(root){
-        File file = root.openNextFile();
-        while (file) {
-
-          if (file.isDirectory()) {
-            Serial.printf("[dir] %s\n", file.name());
-          } else {
-            Serial.printf("[file] %s (%d bytes)\n", file.name(), file.size());
+      if (is_fs2 == false) {
+        if (root) {
+          File file = root.openNextFile();
+          while (file) {
+            if (file.isDirectory()) {
+              Serial.printf("[dir]  UserData%s/%s\n", path, file.name());
+            } else {
+              Serial.printf("[file] UserData%s/%s (%d bytes)\n", path, file.name(), file.size());
+            }
+            // move to next file
+            file = root.openNextFile();
           }
-
-          // move to next file
-          file = root.openNextFile();
-
+          root.close();
         }
-        root.close();
       }
 
+      if (is_fs2 == true || strlen(path) == 0 || strcmp(path, "/") == 0) {
+        if (_store->getSecondaryFS() != nullptr) {
+          File root2 = _store->openRead(_store->getSecondaryFS(), path);
+          File file = root2.openNextFile();
+          while (file) {
+            if (file.isDirectory()) {
+              Serial.printf("[dir]  ExtraFS%s/%s\n", path, file.name());
+            } else {
+              Serial.printf("[file] ExtraFS%s/%s (%d bytes)\n", path, file.name(), file.size());
+            }
+            // move to next file
+            file = root2.openNextFile();
+          }
+          root2.close();
+        }
+      }
     } else if (memcmp(cli_command, "cat", 3) == 0) {
 
       // get path from command e.g: "cat /contacts3"
       const char *path = &cli_command[4];
       
+      bool is_fs2 = false;
+      if (memcmp(path, "UserData/", 9) == 0) {
+        path += 8; // skip "UserData"
+      } else if (memcmp(path, "ExtraFS/", 8) == 0) {
+        path += 7; // skip "ExtraFS"
+        is_fs2 = true;
+      } else {
+        Serial.println("Invalid path provided, must start with UserData/ or ExtraFS/");
+        cli_command[0] = 0;
+        return;
+      }
+
       // log file content as hex
       File file = _store->openRead(path);
+      if (is_fs2 == true) {
+        file = _store->openRead(_store->getSecondaryFS(), path);
+      }
       if(file){
 
         // get file content
@@ -1567,17 +1627,30 @@ void MyMesh::checkCLIRescueCmd() {
       }
 
     } else if (memcmp(cli_command, "rm ", 3) == 0) {
-
       // get path from command e.g: "rm /adv_blobs"
-      const char *path = &cli_command[4];
-
+      const char *path = &cli_command[3];
+      MESH_DEBUG_PRINTLN("Removing file: %s", path);
       // ensure path is not empty, or root dir
       if(!path || strlen(path) == 0 || strcmp(path, "/") == 0){
         Serial.println("Invalid path provided");
       } else {
+      bool is_fs2 = false;
+      if (memcmp(path, "UserData/", 9) == 0) {
+        path += 8; // skip "UserData"
+      } else if (memcmp(path, "ExtraFS/", 8) == 0) {
+        path += 7; // skip "ExtraFS"
+        is_fs2 = true;
+      }
 
         // remove file
-        bool removed = _store->removeFile(path);
+        bool removed;
+        if (is_fs2) {
+          MESH_DEBUG_PRINTLN("Removing file from ExtraFS: %s", path);
+          removed = _store->removeFile(_store->getSecondaryFS(), path);
+        } else {
+          MESH_DEBUG_PRINTLN("Removing file from UserData: %s", path);
+          removed = _store->removeFile(path);
+        }
         if(removed){
           Serial.println("File removed");
         } else {
@@ -1618,8 +1691,8 @@ void MyMesh::checkSerialInterface() {
       _serial->writeFrame(out_frame, 5);
       _iter_started = false;
     }
-  } else if (!_serial->isWriteBusy()) {
-    checkConnections();
+  //} else if (!_serial->isWriteBusy()) {
+  //  checkConnections();    // TODO - deprecate the 'Connections' stuff
   }
 }
 
