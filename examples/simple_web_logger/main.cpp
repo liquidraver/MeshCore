@@ -145,7 +145,10 @@ struct NodePrefs {  // persisted to file
   double node_lat, node_lon;
   float freq;
   uint8_t tx_power_dbm;
-  uint8_t unused[3];
+  float bw;
+  uint8_t sf;
+  uint8_t cr;
+  uint8_t unused[2];
 };
 
 struct WiFiPrefs {
@@ -704,6 +707,9 @@ public:
     strcpy(_prefs.node_name, "NONAME");
     _prefs.freq = LORA_FREQ;
     _prefs.tx_power_dbm = LORA_TX_POWER;
+    _prefs.bw = LORA_BW;
+    _prefs.sf = LORA_SF;
+    _prefs.cr = LORA_CR;
 
     command[0] = 0;
     curr_recipient = NULL;
@@ -712,6 +718,9 @@ public:
 
   float getFreqPref() const { return _prefs.freq; }
   uint8_t getTxPowerPref() const { return _prefs.tx_power_dbm; }
+  float getBwPref() const { return _prefs.bw; }
+  uint8_t getSfPref() const { return _prefs.sf; }
+  uint8_t getCrPref() const { return _prefs.cr; }
 
   const uint8_t* getPubKey() {
     return self_id.pub_key;
@@ -924,6 +933,13 @@ public:
       } else {
          Serial.println("   Err: no recipient selected");
       }
+    } else if (strcmp(command, "get radio") == 0) {
+      Serial.println("Current Radio Settings:");
+      Serial.printf("   Frequency: %.3f MHz\n", _prefs.freq);
+      Serial.printf("   Bandwidth: %.1f kHz\n", _prefs.bw);
+      Serial.printf("   Spreading Factor: %d\n", _prefs.sf);
+      Serial.printf("   Coding Rate: %d\n", _prefs.cr);
+      Serial.printf("   TX Power: %d dBm\n", _prefs.tx_power_dbm);
     } else if (strcmp(command, "advert") == 0) {
       auto pkt = createSelfAdvert(_prefs.node_name, _prefs.node_lat, _prefs.node_lon);
       if (pkt) {
@@ -1013,6 +1029,18 @@ public:
         Serial.println("  OK - reboot to apply");
       } else if (memcmp(config, "freq ", 5) == 0) {
         _prefs.freq = atof(&config[5]);
+        savePrefs();
+        Serial.println("  OK - reboot to apply");
+      } else if (memcmp(config, "bw ", 3) == 0) {
+        _prefs.bw = atof(&config[3]);
+        savePrefs();
+        Serial.println("  OK - reboot to apply");
+      } else if (memcmp(config, "sf ", 3) == 0) {
+        _prefs.sf = atoi(&config[3]);
+        savePrefs();
+        Serial.println("  OK - reboot to apply");
+      } else if (memcmp(config, "cr ", 3) == 0) {
+        _prefs.cr = atoi(&config[3]);
         savePrefs();
         Serial.println("  OK - reboot to apply");
       } else {
@@ -1105,7 +1133,8 @@ public:
       Serial.println("/update");
     } else if (memcmp(command, "help", 4) == 0) {
       Serial.println("Commands:");
-      Serial.println("   set {name|lat|lon|freq|tx|af} {value}");
+      Serial.println("   set {name|lat|lon|freq|tx|af|bw|sf|cr} {value}");
+      Serial.println("   get radio");
       Serial.println("   card");
       Serial.println("   import {biz card}");
       Serial.println("   clock");
@@ -1342,7 +1371,7 @@ void setup() {
   SPIFFS.begin(true);
   the_mesh.begin(SPIFFS);
 
-  radio_set_params(the_mesh.getFreqPref(), LORA_BW, LORA_SF, LORA_CR);
+  radio_set_params(the_mesh.getFreqPref(), the_mesh.getBwPref(), the_mesh.getSfPref(), the_mesh.getCrPref());
   radio_set_tx_power(the_mesh.getTxPowerPref());
 
   the_mesh.showWelcome();
