@@ -34,9 +34,9 @@
 
 // Compile-time check for PINGPONG_ENABLED
 #ifdef PINGPONG_ENABLED
-  #pragma message("PINGPONG_ENABLED is defined!")
+  // PINGPONG_ENABLED is defined
 #else
-  #pragma message("PINGPONG_ENABLED is NOT defined!")
+  // PINGPONG_ENABLED is NOT defined
 #endif
 
 #ifndef LORA_FREQ
@@ -507,18 +507,18 @@ protected:
     saveContacts();
   }
 
-  bool processAck(const uint8_t *data) override {
+  ContactInfo* processAck(const uint8_t *data) override {
     if (memcmp(data, &expected_ack_crc, 4) == 0) {     // got an ACK from recipient
       Serial.printf("   Got ACK! (round trip: %d millis)\n", _ms->getMillis() - last_msg_sent);
       // NOTE: the same ACK can be received multiple times!
       expected_ack_crc = 0;  // reset our expected hash, now that we have received ACK
-      return true;
+      return nullptr;  // Return nullptr instead of true
     }
 
     //uint32_t crc;
     //memcpy(&crc, data, 4);
     //MESH_DEBUG_PRINTLN("unknown ACK received: %08X (expected: %08X)", crc, expected_ack_crc);
-    return false;
+    return nullptr;
   }
 
   void onMessageRecv(const ContactInfo& from, mesh::Packet* pkt, uint32_t sender_timestamp, const char *text) override {
@@ -561,12 +561,9 @@ protected:
 
         // Check for ping message and send pong response
 #ifdef PINGPONG_ENABLED
-        Serial.println("[DEBUG] PINGPONG_ENABLED is defined, calling PingPongHelper");
         if (PingPongHelper::processMessage(*this, from, pkt, sender_timestamp, text)) {
-          Serial.println("   Sent pong response!");
+          return;
         }
-#else
-        Serial.println("[DEBUG] PINGPONG_ENABLED is NOT defined");
 #endif
 
     // Special commands
@@ -632,45 +629,60 @@ protected:
 
         // Check for ping message in channel and send pong response
 #ifdef PINGPONG_ENABLED
-        Serial.println("[DEBUG] PINGPONG_ENABLED is defined, checking channel message");
         if (PingPongHelper::isPingMessage(text)) {
-          Serial.println("[DEBUG] Detected ping message in channel");
+          // Simple 15-second cooldown for channel messages (no deduplication needed)
+          static uint32_t last_channel_pong = 0;
+          uint32_t current_time = millis();
           
-          // For channel messages, we don't have direct sender info, so use a generic response
-          char sender_name[32] = "Unknown";
-          
-          // Get RSSI from radio
-          float rssi = 0.0;
-          if (getRadio()) {
-            rssi = getRadio()->getLastRSSI();
+          // Check if enough time has passed (handle initial case and rollover)
+          bool can_send = false;
+          if (last_channel_pong == 0) {
+            // First time, allow sending
+            can_send = true;
+          } else if (current_time >= last_channel_pong) {
+            // Normal case: check if 15 seconds have passed
+            can_send = (current_time - last_channel_pong) >= 15000;
+          } else {
+            // Rollover case: check if enough time has passed
+            can_send = ((0xFFFFFFFF - last_channel_pong) + current_time + 1) >= 15000;
           }
           
-          // Generate pong response
-          char response[256];
-          char router_ids_buffer[256];
-          uint8_t hop_count = pkt->path_len;
-          
-          // Extract path info
-          if (PingPongHelper::extractPathInfo(pkt, hop_count, router_ids_buffer, sizeof(router_ids_buffer))) {
-            if (PingPongHelper::generatePongResponse(sender_name, hop_count, router_ids_buffer, 
-                                                     pkt->_snr, rssi, true, response, sizeof(response))) {
-              Serial.printf("[DEBUG] Generated pong response: %s\n", response);
-              
-              // Send pong response to the channel
-              if (sendGroupMessage(timestamp, const_cast<mesh::GroupChannel&>(channel), "PingPong", response, strlen(response))) {
-                Serial.println("[DEBUG] Sent pong response to channel");
-              } else {
-                Serial.println("[DEBUG] Failed to send pong response to channel");
+          if (can_send) {
+            // Extract sender name from channel message format: "<sender>: <msg>"
+            char sender_name[32] = "Unknown";
+            const char* colon_pos = strchr(text, ':');
+            if (colon_pos && colon_pos > text) {
+              size_t sender_len = colon_pos - text;
+              if (sender_len < sizeof(sender_name)) {
+                strncpy(sender_name, text, sender_len);
+                sender_name[sender_len] = '\0';
               }
-            } else {
-              Serial.println("[DEBUG] Failed to generate pong response");
             }
-          } else {
-            Serial.println("[DEBUG] Failed to extract path info");
+            
+            // Get RSSI from radio
+            float rssi = 0.0;
+            if (getRadio()) {
+              rssi = getRadio()->getLastRSSI();
+            }
+            
+            // Generate pong response
+            char response[256];
+            char router_ids_buffer[256];
+            uint8_t hop_count = pkt->path_len;
+            
+            // Extract path info
+            if (PingPongHelper::extractPathInfo(pkt, hop_count, router_ids_buffer, sizeof(router_ids_buffer))) {
+              if (PingPongHelper::generatePongResponse(sender_name, hop_count, router_ids_buffer, 
+                                                       pkt->getSNR(), rssi, true, response, sizeof(response))) {
+                // Update cooldown timer
+                last_channel_pong = current_time;
+                
+                // Schedule delayed channel response (non-blocking)
+                PingPongHelper::scheduleDelayedChannelResponse(*this, channel, response, 5000, _prefs.node_name);
+              }
+            }
           }
         }
-#else
-        Serial.println("[DEBUG] PINGPONG_ENABLED is NOT defined for channel");
 #endif
   }
   
@@ -1385,4 +1397,8 @@ void setup() {
 
 void loop() {
   the_mesh.loop();
+  
+#ifdef PINGPONG_ENABLED
+  PingPongHelper::processScheduledResponses();
+#endif
 }
