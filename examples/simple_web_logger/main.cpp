@@ -72,8 +72,11 @@ static bool ntpSynced = false;
 const char* ntpServer = "91.82.109.180";
 const long  gmtOffset_sec = 60 * 60 * 3;
 const int   daylightOffset_sec = 3600;
-const unsigned long ntpSyncInterval = 5 * 60 * 1000;
+const unsigned long ntpFirstSyncDelay = 30 * 1000;        // 30 seconds after boot
+const unsigned long ntpSecondSyncInterval = 5 * 60 * 1000; // 5 minutes after first
+const unsigned long ntpRegularSyncInterval = 2 * 60 * 60 * 1000; // 2 hours thereafter
 unsigned long ntpNext = 0;
+static int ntpSyncCount = 0;
 
 // RTOS, wifi thread
 TaskHandle_t WiFiTask;
@@ -804,9 +807,13 @@ public:
     // Add additional channels
     // Correct base64 conversion of hex PSK: 26c7168483fad33f45cb72092ab148642 -> JscWhIP60z9Fy3IJKrFIZA==
     addChannel("Hungary", "JscWhIP60z9Fy3IJKrFIZA==");  // Hungary channel
+    addChannel("#hungary", "0q1+QAm3J/tO5cH/UWlOXg==");  // #hungary channel
 
     // Save channels to flash so they persist
     saveChannels();
+    
+    // Schedule first NTP sync for 30 seconds after boot
+    ntpNext = millis() + ntpFirstSyncDelay;
 
     toggleWiFi(true);
   }
@@ -1235,7 +1242,16 @@ void WiFiTaskCode(void * pvParameters) {
         configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
         unsigned time = getTimestamp();
         the_mesh.setClock(time, true);
-        ntpNext = lastConencted + ntpSyncInterval;
+        ntpSyncCount++;
+        
+        // Set next sync interval based on sync count
+        if (ntpSyncCount == 1) {
+          // After first sync, wait 5 minutes for second sync
+          ntpNext = lastConencted + ntpSecondSyncInterval;
+        } else {
+          // After second sync and beyond, wait 2 hours
+          ntpNext = lastConencted + ntpRegularSyncInterval;
+        }
       }
 
       if (the_mesh.getLogPrefs()->selfreport > 0 && millis() > nextReport) {
