@@ -350,6 +350,12 @@
                 </div>
             </div>
 
+            <div>
+                <h4 style="color: #ffffff; margin-bottom: 10px;">Communication Pairs</h4>
+                <div id="communication-pairs-table" style="font-size: 0.9em;">
+                </div>
+            </div>
+
         </div>
     </div>
 
@@ -845,6 +851,12 @@
             container.innerHTML = createStatsTable(stats.destinationHashes, 'Destination Hash', 'Packets');
         }
 
+        function updateCommunicationPairsTable(filter = {}) {
+            const stats = parser.getStats(filter);
+            const container = getById('communication-pairs-table');
+            container.innerHTML = createStatsTable(stats.communicationPairs, 'Sender → Destination', 'Packets');
+        }
+
         function formatTimestamp(timestamp) {
             const date = new Date(timestamp);
             const hours = date.getHours().toString().padStart(2, '0');
@@ -869,6 +881,7 @@
             updateFirstHopsTable(filter);
             updateSenderHashesTable(filter);
             updateDestinationHashesTable(filter);
+            updateCommunicationPairsTable(filter);
         }
 
         function updatePacketTypesTable(filter = {}) {

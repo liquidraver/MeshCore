@@ -1,7 +1,7 @@
 class RawPacketParser {
   constructor() {
     this.packets = [];
-    this.stats = { total: 0, byType: {}, byChannel: {}, firstHops: {}, senderHashes: {}, destinationHashes: {} };
+    this.stats = { total: 0, byType: {}, byChannel: {}, firstHops: {}, senderHashes: {}, destinationHashes: {}, communicationPairs: {} };
     this.startTime = Date.now();
     
     this.knownChannelHashes = {
@@ -66,7 +66,7 @@ class RawPacketParser {
   
   clear() {
     this.packets = [];
-    this.stats = { total: 0, byType: {}, byChannel: {}, firstHops: {}, senderHashes: {}, destinationHashes: {} };
+    this.stats = { total: 0, byType: {}, byChannel: {}, firstHops: {}, senderHashes: {}, destinationHashes: {}, communicationPairs: {} };
     this.startTime = Date.now();
     this.saveSettings();
   }
@@ -352,6 +352,12 @@ class RawPacketParser {
     if (packet.destinationHash) {
       this.stats.destinationHashes[packet.destinationHash] = (this.stats.destinationHashes[packet.destinationHash] || 0) + 1;
     }
+    
+    // Track communication pairs (sender -> destination)
+    if (packet.senderHash && packet.destinationHash) {
+      const pair = `${packet.senderHash} → ${packet.destinationHash}`;
+      this.stats.communicationPairs[pair] = (this.stats.communicationPairs[pair] || 0) + 1;
+    }
   }
 
   getPackets(filter = {}) {
@@ -376,7 +382,8 @@ class RawPacketParser {
       byChannel: {},
       firstHops: {},
       senderHashes: {},
-      destinationHashes: {}
+      destinationHashes: {},
+      communicationPairs: {}
     };
     
     filteredPackets.forEach(packet => {
@@ -399,6 +406,12 @@ class RawPacketParser {
       // Track destination hashes for filtered packets
       if (packet.destinationHash) {
         stats.destinationHashes[packet.destinationHash] = (stats.destinationHashes[packet.destinationHash] || 0) + 1;
+      }
+      
+      // Track communication pairs for filtered packets
+      if (packet.senderHash && packet.destinationHash) {
+        const pair = `${packet.senderHash} → ${packet.destinationHash}`;
+        stats.communicationPairs[pair] = (stats.communicationPairs[pair] || 0) + 1;
       }
     });
     
