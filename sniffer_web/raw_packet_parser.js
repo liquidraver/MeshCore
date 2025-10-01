@@ -361,7 +361,7 @@ class RawPacketParser {
   }
 
   getPackets(filter = {}) {
-    if (!filter.payloadType && !filter.routeType && filter.hopCount === undefined) {
+    if (!filter.payloadType && !filter.routeType && filter.hopCount === undefined && !filter.senderHash && !filter.destinationHash) {
       return this.packets;
     }
     
@@ -369,6 +369,31 @@ class RawPacketParser {
       if (filter.payloadType && packet.payloadType !== this.typeNames[filter.payloadType]) return false;
       if (filter.routeType && packet.routeType !== filter.routeType) return false;
       if (filter.hopCount !== undefined && packet.pathLen !== filter.hopCount) return false;
+      
+      // Handle sender hash filter (with negative support)
+      if (filter.senderHash) {
+        if (filter.senderHash.startsWith('-')) {
+          // Negative filter: exclude packets with this sender
+          const excludeHash = filter.senderHash.substring(1);
+          if (packet.senderHash === excludeHash) return false;
+        } else {
+          // Positive filter: only include packets with this sender
+          if (packet.senderHash !== filter.senderHash) return false;
+        }
+      }
+      
+      // Handle destination hash filter (with negative support)
+      if (filter.destinationHash) {
+        if (filter.destinationHash.startsWith('-')) {
+          // Negative filter: exclude packets with this destination
+          const excludeHash = filter.destinationHash.substring(1);
+          if (packet.destinationHash === excludeHash) return false;
+        } else {
+          // Positive filter: only include packets with this destination
+          if (packet.destinationHash !== filter.destinationHash) return false;
+        }
+      }
+      
       return true;
     });
   }

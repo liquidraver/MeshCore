@@ -291,6 +291,14 @@
                         <label>Hop Count:</label>
                         <input type="number" id="hopFilter" min="0" max="64" placeholder="All hops" style="width: 100%; padding: 5px; background-color: #333; color: #00ff00; border: 1px solid #555; border-radius: 3px; font-family: inherit;">
                     </div>
+                    <div class="filter-group">
+                        <label>Sender Hash:</label>
+                        <input type="text" id="senderFilter" placeholder="e.g. B7 or -B7" maxlength="3" style="width: 100%; padding: 5px; background-color: #333; color: #00ff00; border: 1px solid #555; border-radius: 3px; font-family: inherit; text-transform: uppercase;">
+                    </div>
+                    <div class="filter-group">
+                        <label>Destination Hash:</label>
+                        <input type="text" id="destinationFilter" placeholder="e.g. 79 or -79" maxlength="3" style="width: 100%; padding: 5px; background-color: #333; color: #00ff00; border: 1px solid #555; border-radius: 3px; font-family: inherit; text-transform: uppercase;">
+                    </div>
                 </div>
 
                 <div class="packet-detail" id="packetDetail" style="display: none;">
@@ -377,6 +385,8 @@
         const payloadFilter = document.getElementById('payloadFilter');
         const routeFilter = document.getElementById('routeFilter');
         const hopFilter = document.getElementById('hopFilter');
+        const senderFilter = document.getElementById('senderFilter');
+        const destinationFilter = document.getElementById('destinationFilter');
 
         const totalPackets = document.getElementById('totalPackets');
         const getById = document.getElementById.bind(document);
@@ -393,6 +403,14 @@
             saveFilterSettings();
         });
         hopFilter.addEventListener('input', () => {
+            applyFilters();
+            saveFilterSettings();
+        });
+        senderFilter.addEventListener('input', () => {
+            applyFilters();
+            saveFilterSettings();
+        });
+        destinationFilter.addEventListener('input', () => {
             applyFilters();
             saveFilterSettings();
         });
@@ -490,7 +508,9 @@
             const filter = {
                 payloadType: payloadFilter.value && payloadFilter.value !== '' ? parseInt(payloadFilter.value) : undefined,
                 routeType: routeFilter.value && routeFilter.value !== '' ? routeFilter.value : undefined,
-                hopCount: hopFilter.value && hopFilter.value !== '' ? parseInt(hopFilter.value) : undefined
+                hopCount: hopFilter.value && hopFilter.value !== '' ? parseInt(hopFilter.value) : undefined,
+                senderHash: senderFilter.value && senderFilter.value !== '' ? senderFilter.value.toUpperCase() : undefined,
+                destinationHash: destinationFilter.value && destinationFilter.value !== '' ? destinationFilter.value.toUpperCase() : undefined
             };
             
             const stats = parser.getStats(filter);
@@ -502,7 +522,9 @@
             const filter = {
                 payloadType: payloadFilter.value && payloadFilter.value !== '' ? parseInt(payloadFilter.value) : undefined,
                 routeType: routeFilter.value && routeFilter.value !== '' ? routeFilter.value : undefined,
-                hopCount: hopFilter.value && hopFilter.value !== '' ? parseInt(hopFilter.value) : undefined
+                hopCount: hopFilter.value && hopFilter.value !== '' ? parseInt(hopFilter.value) : undefined,
+                senderHash: senderFilter.value && senderFilter.value !== '' ? senderFilter.value.toUpperCase() : undefined,
+                destinationHash: destinationFilter.value && destinationFilter.value !== '' ? destinationFilter.value.toUpperCase() : undefined
             };
             
             const packets = parser.getPackets(filter);
@@ -677,7 +699,7 @@
         }
 
         function updateClearFiltersIndicator() {
-            const hasFilters = payloadFilter.value || routeFilter.value || hopFilter.value;
+            const hasFilters = payloadFilter.value || routeFilter.value || hopFilter.value || senderFilter.value || destinationFilter.value;
             const indicator = document.getElementById('clearFiltersIndicator');
             indicator.style.display = hasFilters ? 'inline' : 'none';
         }
@@ -686,6 +708,8 @@
             payloadFilter.value = '';
             routeFilter.value = '';
             hopFilter.value = '';
+            senderFilter.value = '';
+            destinationFilter.value = '';
             applyFilters();
         }
 
@@ -871,7 +895,9 @@
             const filter = {
                 payloadType: payloadFilter.value && payloadFilter.value !== '' ? parseInt(payloadFilter.value) : undefined,
                 routeType: routeFilter.value && routeFilter.value !== '' ? routeFilter.value : undefined,
-                hopCount: hopFilter.value && hopFilter.value !== '' ? parseInt(hopFilter.value) : undefined
+                hopCount: hopFilter.value && hopFilter.value !== '' ? parseInt(hopFilter.value) : undefined,
+                senderHash: senderFilter.value && senderFilter.value !== '' ? senderFilter.value.toUpperCase() : undefined,
+                destinationHash: destinationFilter.value && destinationFilter.value !== '' ? destinationFilter.value.toUpperCase() : undefined
             };
             
             updatePacketTypesTable(filter);
@@ -969,7 +995,9 @@
             const settings = {
                 payloadType: payloadFilter.value,
                 routeType: routeFilter.value,
-                hopCount: hopFilter.value
+                hopCount: hopFilter.value,
+                senderHash: senderFilter.value,
+                destinationHash: destinationFilter.value
             };
             localStorage.setItem('meshcore_filter_settings', JSON.stringify(settings));
         }
@@ -982,6 +1010,8 @@
                     if (settings.payloadType) payloadFilter.value = settings.payloadType;
                     if (settings.routeType) routeFilter.value = settings.routeType;
                     if (settings.hopCount) hopFilter.value = settings.hopCount;
+                    if (settings.senderHash) senderFilter.value = settings.senderHash;
+                    if (settings.destinationHash) destinationFilter.value = settings.destinationHash;
                 }
             } catch (e) {
             }
