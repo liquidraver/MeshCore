@@ -3,6 +3,10 @@
 
 #include "MyMesh.h"
 
+#ifdef ENV_INCLUDE_GPS
+#include <helpers/sensors/TimeSyncHelper.h>
+#endif
+
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
   static UITask ui_task(display);
@@ -80,8 +84,24 @@ void setup() {
   ui_task.begin(the_mesh.getNodePrefs(), FIRMWARE_BUILD_DATE, FIRMWARE_VERSION);
 #endif
 
+  // Initialize GPS time sync if GPS is available
+#ifdef ENV_INCLUDE_GPS
+  TimeSyncHelper::init();
+  TimeSyncHelper::process();
+#endif
+
+  // Wait for initial GPS sync before starting mesh operations
+#ifdef ENV_INCLUDE_GPS
+  while (!TimeSyncHelper::isInitialSyncCompleted()) {
+    TimeSyncHelper::process();
+    delay(100);
+  }
   // send out initial Advertisement to the mesh
   the_mesh.sendSelfAdvertisement(16000);
+#else
+  // send out initial Advertisement to the mesh
+  the_mesh.sendSelfAdvertisement(16000);
+#endif
 }
 
 void loop() {
@@ -111,6 +131,12 @@ void loop() {
 
   the_mesh.loop();
   sensors.loop();
+
+  // Process GPS time sync on every loop
+#ifdef ENV_INCLUDE_GPS
+  TimeSyncHelper::process();
+#endif
+
 #ifdef DISPLAY_CLASS
   ui_task.loop();
 #endif
