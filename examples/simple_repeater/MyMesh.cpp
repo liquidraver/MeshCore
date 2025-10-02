@@ -83,16 +83,16 @@ void MyMesh::putNeighbour(const mesh::Identity &id, uint32_t timestamp, float sn
 }
 
 uint8_t MyMesh::handleLoginReq(const mesh::Identity& sender, const uint8_t* secret, uint32_t sender_timestamp, const uint8_t* data) {
-  ClientInfo* client;
+  ClientInfo* client = NULL;
   if (data[0] == 0) {   // blank password, just check if sender is in ACL
     client = acl.getClient(sender.pub_key, PUB_KEY_SIZE);
     if (client == NULL) {
     #if MESH_DEBUG
       MESH_DEBUG_PRINTLN("Login, sender not in ACL");
     #endif
-      return 0;
     }
-  } else {
+  }
+  if (client == NULL) {
     uint8_t perms;
     if (strcmp((char *)data, _prefs.password) == 0) { // check for valid admin password
       perms = PERM_ACL_ADMIN;
@@ -405,6 +405,7 @@ void MyMesh::onAnonDataRecv(mesh::Packet *packet, const uint8_t *secret, const m
     uint32_t timestamp;
     memcpy(&timestamp, data, 4);
 
+    data[len] = 0;  // ensure null terminator
     uint8_t reply_len = handleLoginReq(sender, secret, timestamp, &data[4]);
 
     if (reply_len == 0) return;   // invalid request
@@ -706,9 +707,24 @@ void MyMesh::formatNeighborsReply(char *reply) {
   char *dp = reply;
 
 #if MAX_NEIGHBOURS
-  for (int i = 0; i < MAX_NEIGHBOURS && dp - reply < 134; i++) {
-    NeighbourInfo *neighbour = &neighbours[i];
-    if (neighbour->heard_timestamp == 0) continue; // skip empty slots
+  // create copy of neighbours list, skipping empty entries so we can sort it separately from main list
+  int16_t neighbours_count = 0;
+  NeighbourInfo* sorted_neighbours[MAX_NEIGHBOURS];
+  for (int i = 0; i < MAX_NEIGHBOURS; i++) {
+    auto neighbour = &neighbours[i];
+    if (neighbour->heard_timestamp > 0) {
+      sorted_neighbours[neighbours_count] = neighbour;
+      neighbours_count++;
+    }
+  }
+
+  // sort neighbours newest to oldest
+  std::sort(sorted_neighbours, sorted_neighbours + neighbours_count, [](const NeighbourInfo* a, const NeighbourInfo* b) {
+    return a->heard_timestamp > b->heard_timestamp; // desc
+  });
+
+  for (int i = 0; i < neighbours_count && dp - reply < 134; i++) {
+    NeighbourInfo *neighbour = sorted_neighbours[i];
 
     // add new line if not first item
     if (i > 0) *dp++ = '\n';
