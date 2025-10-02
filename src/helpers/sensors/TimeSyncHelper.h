@@ -8,19 +8,16 @@
 #include <RTClib.h>
 #include <helpers/sensors/EnvironmentSensorManager.h>
 
-class MyMesh;
-extern MyMesh the_mesh;
-extern EnvironmentSensorManager sensors;
-
 class TimeSyncHelper {
 public:
-    static void init();
+    static void init(mesh::RTCClock& rtc_clock);
     
     static void process();
     
     static bool isInitialSyncCompleted();
 
 private:
+    static mesh::RTCClock* _rtc_clock;
     static char _nmeaBuffer[100];
     static MicroNMEA _nmea;
     static unsigned long _lastSyncTime;
@@ -40,5 +37,7 @@ private:
     static bool isGPSValid();
     static long getGPSTimestamp();
 };
+
+#endif
 
 #endif

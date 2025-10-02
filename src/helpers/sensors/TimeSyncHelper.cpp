@@ -2,6 +2,9 @@
 
 #ifdef ENV_INCLUDE_GPS
 
+extern EnvironmentSensorManager sensors;
+
+mesh::RTCClock* TimeSyncHelper::_rtc_clock = nullptr;
 char TimeSyncHelper::_nmeaBuffer[100];
 MicroNMEA TimeSyncHelper::_nmea;
 unsigned long TimeSyncHelper::_lastSyncTime = -48 * 60 * 60 * 1000;
@@ -15,9 +18,10 @@ unsigned long TimeSyncHelper::_syncStartTime = 0;
 int TimeSyncHelper::_lockFixCount = 0;
 int TimeSyncHelper::_initialSyncTimeoutCounter = 0;
 
-void TimeSyncHelper::init() {
+void TimeSyncHelper::init(mesh::RTCClock& rtc_clock) {
     if (_initialized) return;
     
+    _rtc_clock = &rtc_clock;
     _nmea = MicroNMEA(_nmeaBuffer, sizeof(_nmeaBuffer));
     _lastSyncTime = -48 * 60 * 60 * 1000;
     _rolloverCount = 0;
@@ -48,7 +52,9 @@ bool TimeSyncHelper::isInitialSyncCompleted() {
 
 void TimeSyncHelper::process() {
     if (!_initialized) {
-        init();
+        // Cannot initialize here without rtc_clock parameter
+        // User must call init() with rtc_clock first
+        return;
     }
     
     // Process GPS data if GPS is active
@@ -87,7 +93,7 @@ void TimeSyncHelper::process() {
             if (isGPSValid()) {
                 long gpsTime = getGPSTimestamp();
                 if (gpsTime > 0) {
-                    the_mesh.getRTCClock()->setCurrentTime(gpsTime);
+                    _rtc_clock->setCurrentTime(gpsTime);
                     MESH_DEBUG_PRINTLN("GPS Time sync: %ld", gpsTime);
                 }
             }
@@ -105,10 +111,9 @@ void TimeSyncHelper::process() {
             _initialSyncCompleted = true;
         }
     } else {
+        unsigned long currentTime = millis();
         switch (_syncState) {
             case SYNC_IDLE:
-                unsigned long currentTime = millis();
-
                 if (currentTime < _lastSyncTime) {
                     _rolloverCount++;
                 }
@@ -132,7 +137,7 @@ void TimeSyncHelper::process() {
                         if (isGPSValid()) {
                             long gpsTime = getGPSTimestamp();
                             if (gpsTime > 0) {
-                                the_mesh.getRTCClock()->setCurrentTime(gpsTime);
+                                _rtc_clock->setCurrentTime(gpsTime);
                                 MESH_DEBUG_PRINTLN("GPS Time sync: %ld", gpsTime);
                             }
                         }
@@ -164,7 +169,7 @@ void TimeSyncHelper::process() {
                     if (isGPSValid()) {
                         long gpsTime = getGPSTimestamp();
                         if (gpsTime > 0) {
-                            the_mesh.getRTCClock()->setCurrentTime(gpsTime);
+                            _rtc_clock->setCurrentTime(gpsTime);
                             MESH_DEBUG_PRINTLN("GPS Time sync: %ld", gpsTime);
                         }
                     }

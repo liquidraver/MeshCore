@@ -86,7 +86,7 @@ void setup() {
 
   // Initialize GPS time sync if GPS is available
 #ifdef ENV_INCLUDE_GPS
-  TimeSyncHelper::init();
+  TimeSyncHelper::init(rtc_clock);
   TimeSyncHelper::process();
 #endif
 
@@ -96,10 +96,8 @@ void setup() {
     TimeSyncHelper::process();
     delay(100);
   }
-  // send out initial Advertisement to the mesh
   the_mesh.sendSelfAdvertisement(16000);
 #else
-  // send out initial Advertisement to the mesh
   the_mesh.sendSelfAdvertisement(16000);
 #endif
 }
@@ -132,7 +130,6 @@ void loop() {
   the_mesh.loop();
   sensors.loop();
 
-  // Process GPS time sync on every loop
 #ifdef ENV_INCLUDE_GPS
   TimeSyncHelper::process();
 #endif

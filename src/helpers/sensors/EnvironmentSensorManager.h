@@ -25,6 +25,7 @@ protected:
   bool gps_active = false;
 
   #if ENV_INCLUDE_GPS
+  friend class TimeSyncHelper;
   LocationProvider* _location;
   void start_gps();
   void stop_gps();
