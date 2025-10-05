@@ -78,6 +78,11 @@ const unsigned long ntpRegularSyncInterval = 2 * 60 * 60 * 1000; // 2 hours ther
 unsigned long ntpNext = 0;
 static int ntpSyncCount = 0;
 
+// NTP sync state tracking
+static bool ntpSyncInProgress = false;
+static unsigned long ntpSyncStartTime = 0;
+const unsigned long ntpSyncTimeout = 30 * 1000; // 30 second timeout for NTP sync
+
 // RTOS, wifi thread
 TaskHandle_t WiFiTask;
 void WiFiTaskCode(void* pvParameters);
@@ -630,9 +635,12 @@ protected:
 
     Serial.printf("   %s\n", text);
 
-        // Check for ping message in channel and send pong response
+        // Check for ping message in channel and send pong response (exclude Public channel)
 #ifdef PINGPONG_ENABLED
-        if (PingPongHelper::isPingMessage(text)) {
+        // Check if this is the Public channel - if so, don't respond to ping
+        bool isPublicChannel = (strcmp(chhash, "11") == 0); // Public channel 1-byte hash
+        
+        if (PingPongHelper::isPingMessage(text) && !isPublicChannel) {
           // Simple 15-second cooldown for channel messages (no deduplication needed)
           static uint32_t last_channel_pong = 0;
           uint32_t current_time = millis();
@@ -808,6 +816,7 @@ public:
     // Correct base64 conversion of hex PSK: 26c7168483fad33f45cb72092ab148642 -> JscWhIP60z9Fy3IJKrFIZA==
     addChannel("Hungary", "JscWhIP60z9Fy3IJKrFIZA==");  // Hungary channel
     addChannel("#hungary", "0q1+QAm3J/tO5cH/UWlOXg==");  // #hungary channel
+    addChannel("#ping", "PK4W/QZ7qcMqmL4i6bmFJQ==");  // #ping channel
 
     // Save channels to flash so they persist
     saveChannels();
@@ -1234,24 +1243,42 @@ void WiFiTaskCode(void * pvParameters) {
       sendsys = false;
       lastConencted = millis();
 
-      if (lastConencted >= ntpNext) {
+      // Check if it's time to start a new NTP sync
+      if (lastConencted >= ntpNext && !ntpSyncInProgress) {
         ntpSynced = false;
+        ntpSyncInProgress = true;
+        ntpSyncStartTime = lastConencted;
+        configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+        Serial.println("NTP sync started...");
       }
 
-      if (!ntpSynced) {
-        configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+      // Handle ongoing NTP sync
+      if (ntpSyncInProgress) {
         unsigned time = getTimestamp();
-        the_mesh.setClock(time, true);
-        ntpSyncCount++;
         
-        // Set next sync interval based on sync count
-        if (ntpSyncCount == 1) {
-          // After first sync, wait 5 minutes for second sync
-          ntpNext = lastConencted + ntpSecondSyncInterval;
-        } else {
-          // After second sync and beyond, wait 2 hours
-          ntpNext = lastConencted + ntpRegularSyncInterval;
+        if (time > 0) {
+          // NTP sync successful - set clock and schedule next sync
+          the_mesh.setClock(time, true);
+          ntpSyncCount++;
+          ntpSyncInProgress = false;
+          
+          Serial.printf("NTP sync completed successfully (attempt #%d)\n", ntpSyncCount);
+          
+          // Set next sync interval based on sync count
+          if (ntpSyncCount == 1) {
+            // After first sync, wait 5 minutes for second sync
+            ntpNext = lastConencted + ntpSecondSyncInterval;
+          } else {
+            // After second sync and beyond, wait 2 hours
+            ntpNext = lastConencted + ntpRegularSyncInterval;
+          }
+        } else if ((lastConencted - ntpSyncStartTime) > ntpSyncTimeout) {
+          // NTP sync timed out - retry later
+          ntpSyncInProgress = false;
+          ntpNext = lastConencted + 60000; // Retry in 1 minute
+          Serial.println("NTP sync timed out, will retry in 1 minute");
         }
+        // If time is still 0 and we haven't timed out, continue waiting
       }
 
       if (the_mesh.getLogPrefs()->selfreport > 0 && millis() > nextReport) {
