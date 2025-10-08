@@ -3,7 +3,7 @@
 
 #ifdef TIMESYNC_MONITOR_ENABLED
 
-#define MAX_TRACKED_REPEATERS 20
+#define MAX_TRACKED_REPEATERS 350
 #define SEVEN_DAYS_SECONDS 604800
 #define DAILY_REPORT_HOUR 10          // Local time hour (24h format)
 #define DAILY_REPORT_MINUTE 0         // Local time minute
