@@ -23,6 +23,7 @@
 #include <helpers/StaticPoolPacketManager.h>
 #include <helpers/IdentityStore.h>
 #include <helpers/pingpong.h>
+#include <helpers/timesync_monitor.h>
 #include <RTClib.h>
 #include <target.h>
 
@@ -72,7 +73,7 @@ static bool ntpSynced = false;
 const char* ntpServer = "91.82.109.180";
 const long  gmtOffset_sec = 60 * 60 * 3;
 const int   daylightOffset_sec = 3600;
-const unsigned long ntpFirstSyncDelay = 30 * 1000;        // 30 seconds after boot
+const unsigned long ntpFirstSyncDelay = 10 * 1000;        // 10 seconds after boot
 const unsigned long ntpSecondSyncInterval = 5 * 60 * 1000; // 5 minutes after first
 const unsigned long ntpRegularSyncInterval = 2 * 60 * 60 * 1000; // 2 hours thereafter
 unsigned long ntpNext = 0;
@@ -178,6 +179,7 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
   uint32_t expected_ack_crc;
   ChannelDetails* _public;
   ChannelDetails* _ping_channel;
+  ChannelDetails* _hungary;
   unsigned long last_msg_sent;
   ContactInfo* curr_recipient;
   char command[512+10];
@@ -451,6 +453,14 @@ protected:
       return;
     }
 
+#ifdef TIMESYNC_MONITOR_ENABLED
+    // Monitor time sync status (only if our node has good time)
+    uint32_t our_time = getRTCClock()->getCurrentTime();
+    if (our_time >= TIMESYNC_SANITY_CHECK_EPOCH) {
+      TimeSyncMonitor::processAdvertisement(pkt, id, timestamp, parser.getName(), our_time);
+    }
+#endif
+
     uint8_t hash[MAX_HASH_SIZE];
     pkt->calculatePacketHash(hash);
 
@@ -569,6 +579,13 @@ protected:
         if (PingPongHelper::processMessage(*this, from, pkt, sender_timestamp, text)) {
           return;
         }
+#endif
+
+#ifdef TIMESYNC_MONITOR_ENABLED
+    // Check for timesync shame list command
+    if (TimeSyncMonitor::processShameListCommand(*this, from, pkt, sender_timestamp, text)) {
+      return;
+    }
 #endif
 
     // Special commands
@@ -814,14 +831,22 @@ public:
 
     // Add additional channels
     // Correct base64 conversion of hex PSK: 26c7168483fad33f45cb72092ab148642 -> JscWhIP60z9Fy3IJKrFIZA==
-    addChannel("Hungary", "JscWhIP60z9Fy3IJKrFIZA==");  // Hungary channel
+    _hungary = addChannel("Hungary", "JscWhIP60z9Fy3IJKrFIZA==");  // Hungary channel
     addChannel("#hungary", "0q1+QAm3J/tO5cH/UWlOXg==");  // #hungary channel
     _ping_channel = addChannel("#ping", "PK4W/QZ7qcMqmL4i6bmFJQ==");  // #ping channel
 
     // Save channels to flash so they persist
     saveChannels();
     
-    // Schedule first NTP sync for 30 seconds after boot
+#ifdef TIMESYNC_MONITOR_ENABLED
+    // Initialize time sync monitor
+    TimeSyncMonitor::begin();
+    if (_public) {
+      TimeSyncMonitor::setPublicChannel(&_public->channel);
+    }
+#endif
+    
+    // Schedule first NTP sync for 10 seconds after boot
     ntpNext = millis() + ntpFirstSyncDelay;
 
     toggleWiFi(true);
@@ -1243,24 +1268,32 @@ void WiFiTaskCode(void * pvParameters) {
       sendsys = false;
       lastConencted = millis();
 
-      if (lastConencted >= ntpNext) {
+      // Check if it's time to sync (use current millis, not lastConencted)
+      if (millis() >= ntpNext) {
         ntpSynced = false;
       }
 
       if (!ntpSynced) {
         configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-        unsigned time = getTimestamp();
-        the_mesh.setClock(time, true);
-        ntpSyncCount++;
         
-        // Set next sync interval based on sync count
-        if (ntpSyncCount == 1) {
-          // After first sync, wait 5 minutes for second sync
-          ntpNext = lastConencted + ntpSecondSyncInterval;
-        } else {
-          // After second sync and beyond, wait 2 hours
-          ntpNext = lastConencted + ntpRegularSyncInterval;
+        // Wait for NTP to complete (configTime is non-blocking on ESP32)
+        task_sleep(2000);  // Wait 2 seconds for NTP response
+        
+        unsigned time = getTimestamp();
+        if (time > 1735689600) {  // Valid time (after Jan 1, 2025)
+          the_mesh.setClock(time, true);
+          ntpSyncCount++;
+          
+          // Set next sync interval based on sync count
+          if (ntpSyncCount == 1) {
+            // After first sync, wait 5 minutes for second sync
+            ntpNext = millis() + ntpSecondSyncInterval;
+          } else {
+            // After second sync and beyond, wait 2 hours
+            ntpNext = millis() + ntpRegularSyncInterval;
+          }
         }
+        // If failed, ntpSynced stays false and will retry next loop iteration
       }
 
       if (the_mesh.getLogPrefs()->selfreport > 0 && millis() > nextReport) {
@@ -1425,5 +1458,9 @@ void loop() {
   
 #ifdef PINGPONG_ENABLED
   PingPongHelper::processScheduledResponses();
+#endif
+
+#ifdef TIMESYNC_MONITOR_ENABLED
+  TimeSyncMonitor::checkAndSendDailyReport(the_mesh, the_mesh.getRTCClock()->getCurrentTime());
 #endif
 }
