@@ -177,6 +177,7 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
   LoggerMeshTables* _tables;
   uint32_t expected_ack_crc;
   ChannelDetails* _public;
+  ChannelDetails* _ping_channel;
   unsigned long last_msg_sent;
   ContactInfo* curr_recipient;
   char command[512+10];
@@ -631,12 +632,15 @@ protected:
 
     Serial.printf("   %s\n", text);
 
-        // Check for ping message in channel and send pong response (exclude Public channel)
+        // Check for ping message in channel and send pong response (only #ping channel)
 #ifdef PINGPONG_ENABLED
-        // Check if this is the Public channel - if so, don't respond to ping
-        bool isPublicChannel = (strcmp(chhash, "11") == 0); // Public channel 1-byte hash
+        // Only respond to ping in the #ping channel (compare hash directly)
+        bool isPingChannel = false;
+        if (_ping_channel) {
+            isPingChannel = (memcmp(channel.hash, _ping_channel->channel.hash, PATH_HASH_SIZE) == 0);
+        }
         
-        if (PingPongHelper::isPingMessage(text) && !isPublicChannel) {
+        if (PingPongHelper::isPingMessage(text) && isPingChannel) {
           // Simple 15-second cooldown for channel messages (no deduplication needed)
           static uint32_t last_channel_pong = 0;
           uint32_t current_time = millis();
@@ -812,7 +816,7 @@ public:
     // Correct base64 conversion of hex PSK: 26c7168483fad33f45cb72092ab148642 -> JscWhIP60z9Fy3IJKrFIZA==
     addChannel("Hungary", "JscWhIP60z9Fy3IJKrFIZA==");  // Hungary channel
     addChannel("#hungary", "0q1+QAm3J/tO5cH/UWlOXg==");  // #hungary channel
-    addChannel("#ping", "PK4W/QZ7qcMqmL4i6bmFJQ==");  // #ping channel
+    _ping_channel = addChannel("#ping", "PK4W/QZ7qcMqmL4i6bmFJQ==");  // #ping channel
 
     // Save channels to flash so they persist
     saveChannels();
