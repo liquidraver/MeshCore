@@ -61,8 +61,7 @@ bool radio_init() {
     return false;  // fail
   }
   
-  radio.setCRC(2);
-  radio.explicitHeader();
+  radio.setCRC(1);
 
 #ifdef RF_SWITCH_TABLE
   radio.setRfSwitchTable(rfswitch_dios, rfswitch_table);
