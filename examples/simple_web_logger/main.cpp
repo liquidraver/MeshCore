@@ -170,11 +170,19 @@ struct LogPrefs {
   uint8_t dofwd;
 };
 
+#define MAX_ADMINS 8
+struct AdminPrefs {
+  uint16_t version;
+  uint16_t count;
+  uint8_t admin_keys[MAX_ADMINS][PUB_KEY_SIZE];
+};
+
 class MyMesh : public BaseChatMesh, ContactVisitor {
   FILESYSTEM* _fs;
   NodePrefs _prefs;
   WiFiPrefs _wifi;
   LogPrefs _logp;
+  AdminPrefs _admin;
   LoggerMeshTables* _tables;
   uint32_t expected_ack_crc;
   ChannelDetails* _public;
@@ -282,6 +290,66 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
     }
   }
 
+  void loadAdmins() {
+    if (_fs->exists("/admin_prefs")) {
+      File file = _fs->open("/admin_prefs");
+      if (file) {
+        file.read((uint8_t *)&_admin, sizeof(_admin));
+        file.close();
+        
+        if (_admin.version == 0) {
+          _admin.version = 1;
+          _admin.count = 0;
+        }
+        
+        // Validate count
+        if (_admin.count > MAX_ADMINS) {
+          _admin.count = 0;
+        }
+      }
+    } else {
+      // Initialize empty admin list
+      _admin.version = 1;
+      _admin.count = 0;
+      memset(_admin.admin_keys, 0, sizeof(_admin.admin_keys));
+    }
+  }
+
+  void saveAdmins() {
+    File file = _fs->open("/admin_prefs", "w", true);
+    if (file) {
+      file.write((const uint8_t *)&_admin, sizeof(_admin));
+      file.close();
+    }
+  }
+
+  bool isAdmin(const uint8_t* pub_key) {
+    for (uint16_t i = 0; i < _admin.count; i++) {
+      if (memcmp(pub_key, _admin.admin_keys[i], PUB_KEY_SIZE) == 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool addAdmin(const uint8_t* pub_key) {
+    // Check if already admin
+    if (isAdmin(pub_key)) {
+      return false; // Already exists
+    }
+    
+    // Check if we have space
+    if (_admin.count >= MAX_ADMINS) {
+      return false; // Full
+    }
+    
+    // Add new admin
+    memcpy(_admin.admin_keys[_admin.count], pub_key, PUB_KEY_SIZE);
+    _admin.count++;
+    saveAdmins();
+    return true;
+  }
+
   void saveContacts() {
     File file = _fs->open("/contacts", "w", true);
     if (file) {
@@ -383,8 +451,6 @@ protected:
   } 
 
   mesh::DispatcherAction onRecvPacket(mesh::Packet* pkt) override {
-    Serial.printf("[DEBUG] onRecvPacket called - header: %u, payload_len: %u\n", pkt->header, pkt->payload_len);
-    
     // send raw
     if (_logp.doraw) {
       int phType = (pkt->header >> PH_TYPE_SHIFT) & PH_TYPE_MASK;
@@ -431,10 +497,7 @@ protected:
       messageQueue.push(doc);
     }
 
-    Serial.println("[DEBUG] Calling base class onRecvPacket");
-    mesh::DispatcherAction result = Mesh::onRecvPacket(pkt);
-    Serial.printf("[DEBUG] Base class onRecvPacket returned: %d\n", (int)result);
-    return result;
+    return Mesh::onRecvPacket(pkt);
   }
 
   void onAdvertRecv(mesh::Packet* pkt, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len) {
@@ -537,10 +600,6 @@ protected:
   }
 
   void onMessageRecv(const ContactInfo& from, mesh::Packet* pkt, uint32_t sender_timestamp, const char *text) override {
-    Serial.println("*** DEBUG: onMessageRecv START ***");
-    Serial.printf("[DEBUG] onMessageRecv called with text: '%s'\n", text);
-    Serial.printf("[DEBUG] from.name: '%s'\n", from.name);
-    
     uint8_t hash[MAX_HASH_SIZE];
     pkt->calculatePacketHash(hash);
 
@@ -571,10 +630,7 @@ protected:
     doc["message"]["path"] = getPath(pkt);
     messageQueue.push(doc);
 
-    // Serial prints
-    Serial.printf("*** MODIFIED MESSAGE from -> %s ***\n", from.name);
-
-        // Check for ping message and send pong response
+    // Check for ping message and send pong response
 #ifdef PINGPONG_ENABLED
         if (PingPongHelper::processMessage(*this, from, pkt, sender_timestamp, text)) {
           return;
@@ -596,6 +652,73 @@ protected:
       uint32_t est_timeout;
       last_msg_sent = _ms->getMillis();
       sendMessage(from, getRTCClock()->getCurrentTime(), 0, echo, expected_ack_crc, est_timeout);
+    } else if (strcmp(text, "start ota") == 0) {  // Admin-only: Start OTA
+      if (isAdmin(from.id.pub_key)) {
+        Serial.printf("Authorized OTA request from %s\n", from.name);
+        
+        // Start OTA server on existing WiFi connection
+        if (WiFi.status() == WL_CONNECTED) {
+          char id[160];
+          sprintf(id, "MeshCore Logger (%s %s)", __DATE__, __TIME__);
+          AsyncWebServer* server = new AsyncWebServer(80);
+          AsyncElegantOTA.setID(id);
+          AsyncElegantOTA.begin(server);
+          server->begin();
+          
+          // Send response with OTA URL
+          char response[128];
+          sprintf(response, "OTA started: http://%s/update", WiFi.localIP().toString().c_str());
+          Serial.println(response);
+          
+          uint32_t est_timeout;
+          last_msg_sent = _ms->getMillis();
+          sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
+        } else {
+          // WiFi not connected
+          char response[] = "OTA failed: WiFi not connected";
+          Serial.println(response);
+          
+          uint32_t est_timeout;
+          last_msg_sent = _ms->getMillis();
+          sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
+        }
+      } else {
+        char sender_pubkey_hex[PUB_KEY_SIZE * 2 + 1];
+        mesh::Utils::toHex(sender_pubkey_hex, from.id.pub_key, PUB_KEY_SIZE);
+        Serial.printf("Unauthorized OTA request from %s (%s)\n", from.name, sender_pubkey_hex);
+        
+        // Send rejection message
+        char response[] = "Access denied: Not authorized";
+        uint32_t est_timeout;
+        last_msg_sent = _ms->getMillis();
+        sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
+      }
+    } else if (strcmp(text, "reboot") == 0) {  // Admin-only: Reboot device
+      if (isAdmin(from.id.pub_key)) {
+        Serial.printf("Authorized reboot request from %s\n", from.name);
+        
+        // Send acknowledgment before rebooting
+        char response[] = "Rebooting now...";
+        uint32_t est_timeout;
+        last_msg_sent = _ms->getMillis();
+        sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
+        
+        // Give time for message to be sent
+        delay(2000);
+        
+        Serial.println("Rebooting...");
+        ESP.restart();
+      } else {
+        char sender_pubkey_hex[PUB_KEY_SIZE * 2 + 1];
+        mesh::Utils::toHex(sender_pubkey_hex, from.id.pub_key, PUB_KEY_SIZE);
+        Serial.printf("Unauthorized reboot request from %s (%s)\n", from.name, sender_pubkey_hex);
+        
+        // Send rejection message
+        char response[] = "Access denied: Not authorized";
+        uint32_t est_timeout;
+        last_msg_sent = _ms->getMillis();
+        sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
+      }
     }
   }
 
@@ -613,8 +736,6 @@ protected:
   }
 
   void onChannelMessageRecv(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t timestamp, const char *text) override {
-    Serial.printf("[DEBUG] onChannelMessageRecv called with text: '%s'\n", text);
-    
     uint8_t hash[MAX_HASH_SIZE];
     pkt->calculatePacketHash(hash);
 
@@ -827,6 +948,7 @@ public:
 
     loadContacts();
     loadChannels();  // Load existing channels from flash first
+    loadAdmins();    // Load authorized admin keys
     _public = addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
 
     // Add additional channels
@@ -839,8 +961,8 @@ public:
     saveChannels();
     
 #ifdef TIMESYNC_MONITOR_ENABLED
-    // Initialize time sync monitor
-    TimeSyncMonitor::begin();
+    // Initialize time sync monitor with filesystem persistence
+    TimeSyncMonitor::begin(_fs, "/timesync_good");
     if (_public) {
       TimeSyncMonitor::setPublicChannel(&_public->channel);
     }
@@ -1159,6 +1281,46 @@ public:
         m_debugPrint = false;
       }
       Serial.printf("  Debug print: %u\n", m_debugPrint);
+    } else if (memcmp(command, "admin ", 6) == 0) {
+      const char* subcmd = &command[6];
+      if (memcmp(subcmd, "add ", 4) == 0) {
+        const char* hex_key = &subcmd[4];
+        // Remove any whitespace
+        while (*hex_key == ' ') hex_key++;
+        
+        int len = strlen(hex_key);
+        if (len == PUB_KEY_SIZE * 2) {
+          uint8_t pub_key[PUB_KEY_SIZE];
+          if (mesh::Utils::fromHex(pub_key, PUB_KEY_SIZE, hex_key)) {
+            if (addAdmin(pub_key)) {
+              Serial.println("  Admin added successfully");
+              char hex_buf[PUB_KEY_SIZE * 2 + 1];
+              mesh::Utils::toHex(hex_buf, pub_key, PUB_KEY_SIZE);
+              Serial.printf("  %s\n", hex_buf);
+            } else {
+              Serial.println("  Error: Admin already exists or list is full");
+            }
+          } else {
+            Serial.println("  Error: Invalid hex format");
+          }
+        } else {
+          Serial.printf("  Error: Wrong length (expected %d hex chars, got %d)\n", PUB_KEY_SIZE * 2, len);
+        }
+      } else if (memcmp(subcmd, "ls", 2) == 0) {
+        Serial.printf("Authorized Admins (%u/%u):\n", _admin.count, MAX_ADMINS);
+        for (uint16_t i = 0; i < _admin.count; i++) {
+          char hex_buf[PUB_KEY_SIZE * 2 + 1];
+          mesh::Utils::toHex(hex_buf, _admin.admin_keys[i], PUB_KEY_SIZE);
+          Serial.printf("  [%d] %s\n", i, hex_buf);
+        }
+      } else if (memcmp(subcmd, "clear", 5) == 0) {
+        _admin.count = 0;
+        memset(_admin.admin_keys, 0, sizeof(_admin.admin_keys));
+        saveAdmins();
+        Serial.println("  All admins cleared");
+      } else {
+        Serial.println("  Usage: admin {add|ls|clear}");
+      }
     } else if (memcmp(command, "regeneratekey", 13) == 0) {
       IdentityStore store(*_fs, "/identity");
       Serial.println("generating key...");
@@ -1203,6 +1365,7 @@ public:
       Serial.println("   wifi {ssid|password} {value}");
       Serial.println("   log {url|auth|report|raw} {value}");
       Serial.println("   channel {add|ls} {value}");
+      Serial.println("   admin {add|ls|clear} {pubkey}");
       Serial.println("   start ota");
     } else {
       Serial.print("   ERROR: unknown command: "); Serial.println(command);

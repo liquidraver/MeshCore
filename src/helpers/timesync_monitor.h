@@ -10,7 +10,7 @@
 
 class TimeSyncMonitor {
 public:
-    static void begin();
+    static void begin(void* filesystem = nullptr, const char* storage_path = nullptr);
     static void processAdvertisement(const mesh::Packet* packet, const mesh::Identity& id, 
                                     uint32_t advertised_timestamp, const char* node_name, uint32_t node_current_time);
     static void checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t current_time);
@@ -18,6 +18,8 @@ public:
     static bool generateShameListMessage(char* output_buffer, size_t buffer_size);
     static bool processShameListCommand(BaseChatMesh& mesh, const ContactInfo& from,
                                        mesh::Packet* packet, uint32_t sender_timestamp, const char* text);
+    static void saveGoodTimeList();
+    static void loadGoodTimeList();
     
 private:
     static bool isNodeTimeSynced(uint32_t node_time);

@@ -3,6 +3,15 @@
 
 #ifdef TIMESYNC_MONITOR_ENABLED
 
+#if defined(ESP32) || defined(RP2040_PLATFORM)
+  #include <FS.h>
+  #define FILESYSTEM  fs::FS
+#elif defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
+  #include <Adafruit_LittleFS.h>
+  #define FILESYSTEM  Adafruit_LittleFS
+  using namespace Adafruit_LittleFS_Namespace;
+#endif
+
 #define MAX_TRACKED_REPEATERS 350
 #define SEVEN_DAYS_SECONDS 604800
 #define DAILY_REPORT_HOUR 10          // Local time hour (24h format)
@@ -51,6 +60,8 @@ static DelayedDirectResponse delayed_direct_responses[5];  // Direct message res
 static uint8_t direct_response_count = 0;
 static PacketCacheEntry packet_cache[MAX_PACKET_CACHE];
 static uint8_t cache_index = 0;
+static FILESYSTEM* fs_instance = nullptr;
+static const char* fs_storage_path = "/timesync_good";
 
 // Calculate if DST is active for Europe/Budapest at given UTC timestamp
 // DST: Last Sunday of March 01:00 UTC -> Last Sunday of October 01:00 UTC
@@ -147,7 +158,7 @@ static bool isPacketExpired(uint32_t timestamp) {
 static void scheduleDelayedDirectResponse(BaseChatMesh& mesh, const ContactInfo& from, 
                                          const char* response, uint32_t delay_ms);
 
-void TimeSyncMonitor::begin() {
+void TimeSyncMonitor::begin(void* filesystem, const char* storage_path) {
     memset(repeater_states, 0, sizeof(repeater_states));
     memset(delayed_messages, 0, sizeof(delayed_messages));
     memset(delayed_direct_responses, 0, sizeof(delayed_direct_responses));
@@ -156,6 +167,78 @@ void TimeSyncMonitor::begin() {
     direct_response_count = 0;
     last_report_day = 0;
     cache_index = 0;
+    
+    if (filesystem) {
+        fs_instance = (FILESYSTEM*)filesystem;
+        if (storage_path) {
+            fs_storage_path = storage_path;
+        }
+        loadGoodTimeList();
+    }
+}
+
+void TimeSyncMonitor::loadGoodTimeList() {
+    if (!fs_instance || !fs_instance->exists(fs_storage_path)) {
+        return;
+    }
+    
+    File file = fs_instance->open(fs_storage_path);
+    if (!file) {
+        return;
+    }
+    
+    while (file.available()) {
+        uint8_t public_key[32];
+        char name[32];
+        uint8_t had_good_time_byte;
+        
+        bool success = (file.read(public_key, 32) == 32);
+        success = success && (file.read((uint8_t*)name, 32) == 32);
+        success = success && (file.read(&had_good_time_byte, 1) == 1);
+        
+        if (!success) break;
+        
+        // Find empty slot
+        for (int i = 0; i < MAX_TRACKED_REPEATERS; i++) {
+            if (!repeater_states[i].is_active) {
+                repeater_states[i].is_active = true;
+                memcpy(repeater_states[i].public_key, public_key, 32);
+                strncpy(repeater_states[i].name, name, sizeof(repeater_states[i].name) - 1);
+                repeater_states[i].name[sizeof(repeater_states[i].name) - 1] = '\0';
+                repeater_states[i].had_good_time = (had_good_time_byte != 0);
+                repeater_states[i].on_shame_list = false;  // Always start clean after reboot
+                repeater_states[i].last_check_time = 0;
+                break;
+            }
+        }
+    }
+    
+    file.close();
+}
+
+void TimeSyncMonitor::saveGoodTimeList() {
+    if (!fs_instance) {
+        return;
+    }
+    
+    File file = fs_instance->open(fs_storage_path, "w", true);
+    if (!file) {
+        return;
+    }
+    
+    for (int i = 0; i < MAX_TRACKED_REPEATERS; i++) {
+        if (repeater_states[i].is_active && repeater_states[i].had_good_time) {
+            uint8_t had_good_time_byte = repeater_states[i].had_good_time ? 1 : 0;
+            
+            bool success = (file.write(repeater_states[i].public_key, 32) == 32);
+            success = success && (file.write((uint8_t*)repeater_states[i].name, 32) == 32);
+            success = success && (file.write(&had_good_time_byte, 1) == 1);
+            
+            if (!success) break;
+        }
+    }
+    
+    file.close();
 }
 
 bool TimeSyncMonitor::hasRespondedToPacket(const uint8_t* packet_hash) {
@@ -271,7 +354,12 @@ void TimeSyncMonitor::processAdvertisement(const mesh::Packet* packet, const mes
     // - If time is good: mark had_good_time=true, remove from shame list
     // - If time is bad AND had_good_time=true before: add to shame list
     
+    bool state_changed = false;
+    
     if (time_is_good) {
+        if (!state->had_good_time) {
+            state_changed = true;
+        }
         state->had_good_time = true;
         state->on_shame_list = false;  // Redemption!
     } else {
@@ -281,6 +369,11 @@ void TimeSyncMonitor::processAdvertisement(const mesh::Packet* packet, const mes
             state->on_shame_list = true;
         }
         // else: never had good time, don't add to shame list yet
+    }
+    
+    // Save to filesystem when had_good_time changes
+    if (state_changed) {
+        saveGoodTimeList();
     }
 }
 
