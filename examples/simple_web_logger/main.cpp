@@ -826,8 +826,8 @@ protected:
                 // Update cooldown timer
                 last_channel_pong = current_time;
                 
-                // Schedule delayed channel response (non-blocking)
-                PingPongHelper::scheduleDelayedChannelResponse(*this, channel, response, 2000, _prefs.node_name);
+                // Schedule delayed channel response (7 seconds allows network storm to settle)
+                PingPongHelper::scheduleDelayedChannelResponse(*this, channel, response, 7000, _prefs.node_name);
               }
             }
           }

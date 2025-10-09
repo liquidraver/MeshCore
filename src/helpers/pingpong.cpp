@@ -215,7 +215,7 @@ bool PingPongHelper::processMessage(BaseChatMesh& mesh, const ContactInfo& from,
     char response[256];
     if (generatePongResponse(from.name, hop_count, router_ids_buffer, packet->getSNR(), rssi, false, response, sizeof(response))) {
         markPacketResponded(packet_hash);
-        scheduleDelayedResponse(mesh, from, response, 5000);
+        scheduleDelayedResponse(mesh, from, response, 7000);
         return true;
     }
     
