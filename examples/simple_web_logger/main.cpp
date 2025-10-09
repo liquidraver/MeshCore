@@ -827,7 +827,7 @@ protected:
                 last_channel_pong = current_time;
                 
                 // Schedule delayed channel response (non-blocking)
-                PingPongHelper::scheduleDelayedChannelResponse(*this, channel, response, 5000, _prefs.node_name);
+                PingPongHelper::scheduleDelayedChannelResponse(*this, channel, response, 2000, _prefs.node_name);
               }
             }
           }
