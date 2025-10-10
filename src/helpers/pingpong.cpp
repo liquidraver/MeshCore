@@ -7,6 +7,8 @@
 #define MAX_PACKET_CACHE 50
 #define CACHE_EXPIRE_TIME_MS 60000
 #define CACHE_HASH_SIZE 6
+#define MAX_SENDER_COOLDOWN 10
+#define SENDER_COOLDOWN_EXPIRE_MS 60000
 
 struct PacketCacheEntry {
     uint8_t hash[CACHE_HASH_SIZE];
@@ -30,13 +32,30 @@ struct DelayedChannelResponse {
     bool is_active;
 };
 
+struct SenderCooldown {
+    char sender_name[32];
+    uint32_t last_response_time;
+    bool is_active;
+};
+
 static PacketCacheEntry packet_cache[MAX_PACKET_CACHE];
 static uint8_t cache_index = 0;
+static SenderCooldown sender_cooldowns[MAX_SENDER_COOLDOWN];
 
 static DelayedResponse delayed_responses[5];
 static DelayedChannelResponse delayed_channel_responses[5];
 static uint8_t response_count = 0;
 static uint8_t channel_response_count = 0;
+
+void PingPongHelper::begin() {
+    memset(packet_cache, 0, sizeof(packet_cache));
+    memset(sender_cooldowns, 0, sizeof(sender_cooldowns));
+    memset(delayed_responses, 0, sizeof(delayed_responses));
+    memset(delayed_channel_responses, 0, sizeof(delayed_channel_responses));
+    cache_index = 0;
+    response_count = 0;
+    channel_response_count = 0;
+}
 
 static bool isPacketExpired(uint32_t timestamp) {
     uint32_t current_time = millis();
@@ -264,6 +283,58 @@ void PingPongHelper::scheduleDelayedChannelResponse(BaseChatMesh& mesh, const me
             break;
         }
     }
+}
+
+bool PingPongHelper::canRespondToChannelSender(const char* sender_name, uint32_t cooldown_ms) {
+    if (!sender_name) return false;
+    
+    uint32_t current_time = millis();
+    
+    // Check if this sender is in cooldown
+    for (int i = 0; i < MAX_SENDER_COOLDOWN; i++) {
+        if (sender_cooldowns[i].is_active && strcmp(sender_cooldowns[i].sender_name, sender_name) == 0) {
+            // Found sender, check if cooldown expired
+            bool expired = false;
+            if (current_time >= sender_cooldowns[i].last_response_time) {
+                expired = (current_time - sender_cooldowns[i].last_response_time) >= cooldown_ms;
+            } else {
+                // Handle millis rollover
+                uint32_t diff = (0xFFFFFFFF - sender_cooldowns[i].last_response_time) + current_time + 1;
+                expired = diff >= cooldown_ms;
+            }
+            
+            if (expired) {
+                // Update timestamp and allow
+                sender_cooldowns[i].last_response_time = current_time;
+                return true;
+            }
+            return false; // Still in cooldown
+        }
+    }
+    
+    // Sender not found, add to cooldown list
+    for (int i = 0; i < MAX_SENDER_COOLDOWN; i++) {
+        // Find inactive or expired slot
+        bool slot_available = !sender_cooldowns[i].is_active;
+        if (!slot_available && current_time >= sender_cooldowns[i].last_response_time) {
+            slot_available = (current_time - sender_cooldowns[i].last_response_time) >= SENDER_COOLDOWN_EXPIRE_MS;
+        }
+        
+        if (slot_available) {
+            sender_cooldowns[i].is_active = true;
+            strncpy(sender_cooldowns[i].sender_name, sender_name, sizeof(sender_cooldowns[i].sender_name) - 1);
+            sender_cooldowns[i].sender_name[sizeof(sender_cooldowns[i].sender_name) - 1] = '\0';
+            sender_cooldowns[i].last_response_time = current_time;
+            return true;
+        }
+    }
+    
+    // No slots available, use oldest (index 0)
+    sender_cooldowns[0].is_active = true;
+    strncpy(sender_cooldowns[0].sender_name, sender_name, sizeof(sender_cooldowns[0].sender_name) - 1);
+    sender_cooldowns[0].sender_name[sizeof(sender_cooldowns[0].sender_name) - 1] = '\0';
+    sender_cooldowns[0].last_response_time = current_time;
+    return true;
 }
 
 void PingPongHelper::processScheduledResponses() {

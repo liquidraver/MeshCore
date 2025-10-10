@@ -7,6 +7,7 @@
 
 class PingPongHelper {
 public:
+    static void begin();
     static bool isPingMessage(const char* text);
     static bool generatePongResponse(const char* sender_name, uint8_t hop_count, 
                                    const char* router_ids, float snr, float rssi, char* response_buffer, size_t buffer_size);
@@ -24,6 +25,7 @@ public:
     static void scheduleDelayedChannelResponse(BaseChatMesh& mesh, const mesh::GroupChannel& channel, 
                                              const char* response, uint32_t delay_ms, const char* sender_name);
     static void processScheduledResponses();
+    static bool canRespondToChannelSender(const char* sender_name, uint32_t cooldown_ms);
 };
 
 #endif // PINGPONG_ENABLED

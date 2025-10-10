@@ -779,35 +779,19 @@ protected:
         }
         
         if (PingPongHelper::isPingMessage(text) && isPingChannel) {
-          // Simple 15-second cooldown for channel messages (no deduplication needed)
-          static uint32_t last_channel_pong = 0;
-          uint32_t current_time = millis();
-          
-          // Check if enough time has passed (handle initial case and rollover)
-          bool can_send = false;
-          if (last_channel_pong == 0) {
-            // First time, allow sending
-            can_send = true;
-          } else if (current_time >= last_channel_pong) {
-            // Normal case: check if 15 seconds have passed
-            can_send = (current_time - last_channel_pong) >= 15000;
-          } else {
-            // Rollover case: check if enough time has passed
-            can_send = ((0xFFFFFFFF - last_channel_pong) + current_time + 1) >= 15000;
+          // Extract sender name from channel message format: "<sender>: <msg>"
+          char sender_name[32] = "Unknown";
+          const char* colon_pos = strchr(text, ':');
+          if (colon_pos && colon_pos > text) {
+            size_t sender_len = colon_pos - text;
+            if (sender_len < sizeof(sender_name)) {
+              strncpy(sender_name, text, sender_len);
+              sender_name[sender_len] = '\0';
+            }
           }
           
-          if (can_send) {
-            // Extract sender name from channel message format: "<sender>: <msg>"
-            char sender_name[32] = "Unknown";
-            const char* colon_pos = strchr(text, ':');
-            if (colon_pos && colon_pos > text) {
-              size_t sender_len = colon_pos - text;
-              if (sender_len < sizeof(sender_name)) {
-                strncpy(sender_name, text, sender_len);
-                sender_name[sender_len] = '\0';
-              }
-            }
-            
+          // Per-sender 15-second cooldown (allows multiple people to ping simultaneously)
+          if (PingPongHelper::canRespondToChannelSender(sender_name, 15000)) {
             // Get RSSI from radio
             float rssi = 0.0;
             if (getRadio()) {
@@ -823,9 +807,6 @@ protected:
             if (PingPongHelper::extractPathInfo(pkt, hop_count, router_ids_buffer, sizeof(router_ids_buffer))) {
               if (PingPongHelper::generatePongResponse(sender_name, hop_count, router_ids_buffer, 
                                                        pkt->getSNR(), rssi, true, response, sizeof(response))) {
-                // Update cooldown timer
-                last_channel_pong = current_time;
-                
                 // Schedule delayed channel response (randomized 5-8s allows network storm to settle
                 // and prevents multiple bots from responding simultaneously)
                 uint32_t delay = getRNG()->nextInt(5000, 8001);  // 5000-8000 ms
@@ -962,6 +943,11 @@ public:
     // Save channels to flash so they persist
     saveChannels();
     
+#ifdef PINGPONG_ENABLED
+    // Initialize pingpong helper
+    PingPongHelper::begin();
+#endif
+
 #ifdef TIMESYNC_MONITOR_ENABLED
     // Initialize time sync monitor with filesystem persistence
     TimeSyncMonitor::begin(_fs, "/timesync_good");
@@ -1031,7 +1017,7 @@ public:
   void sendSelfAdvert(int delay_millis) {
     auto pkt = createSelfAdvert(_prefs.node_name, _prefs.node_lat, _prefs.node_lon);
     if (pkt) {
-      sendFlood(pkt, delay_millis);
+      sendZeroHop(pkt, delay_millis);
     }
   }
 
@@ -1626,6 +1612,7 @@ void loop() {
 #endif
 
 #ifdef TIMESYNC_MONITOR_ENABLED
-  TimeSyncMonitor::checkAndSendDailyReport(the_mesh, the_mesh.getRTCClock()->getCurrentTime());
+  TimeSyncMonitor::checkAndSendDailyReport(the_mesh, the_mesh.getRTCClock()->getCurrentTime(), the_mesh.getNodePrefs()->node_name);
+  TimeSyncMonitor::processPendingSaves();
 #endif
 }

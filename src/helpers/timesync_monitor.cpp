@@ -27,6 +27,7 @@ struct RepeaterTimeState {
     char name[32];                   // Current/last known repeater name (for display only)
     bool had_good_time;              // Ever had good time sync
     bool on_shame_list;              // Currently on shame list
+    uint8_t consecutive_bad_count;   // Counter for consecutive bad time adverts (resets on good time)
     uint32_t last_check_time;        // Last time we checked this repeater
     bool is_active;                  // Slot is in use
 };
@@ -34,6 +35,7 @@ struct RepeaterTimeState {
 struct DelayedShameMessage {
     BaseChatMesh* mesh;
     char message[256];
+    char sender_name[32];
     uint32_t send_time;
     bool is_active;
 };
@@ -62,6 +64,7 @@ static PacketCacheEntry packet_cache[MAX_PACKET_CACHE];
 static uint8_t cache_index = 0;
 static FILESYSTEM* fs_instance = nullptr;
 static const char* fs_storage_path = "/timesync_good";
+static bool save_pending = false;
 
 // Calculate if DST is active for Europe/Budapest at given UTC timestamp
 // DST: Last Sunday of March 01:00 UTC -> Last Sunday of October 01:00 UTC
@@ -167,6 +170,7 @@ void TimeSyncMonitor::begin(void* filesystem, const char* storage_path) {
     direct_response_count = 0;
     last_report_day = 0;
     cache_index = 0;
+    save_pending = false;
     
     if (filesystem) {
         fs_instance = (FILESYSTEM*)filesystem;
@@ -174,6 +178,13 @@ void TimeSyncMonitor::begin(void* filesystem, const char* storage_path) {
             fs_storage_path = storage_path;
         }
         loadGoodTimeList();
+    }
+}
+
+void TimeSyncMonitor::processPendingSaves() {
+    if (save_pending) {
+        save_pending = false;
+        saveGoodTimeList();
     }
 }
 
@@ -207,6 +218,7 @@ void TimeSyncMonitor::loadGoodTimeList() {
                 repeater_states[i].name[sizeof(repeater_states[i].name) - 1] = '\0';
                 repeater_states[i].had_good_time = (had_good_time_byte != 0);
                 repeater_states[i].on_shame_list = false;  // Always start clean after reboot
+                repeater_states[i].consecutive_bad_count = 0;  // Reset counter
                 repeater_states[i].last_check_time = 0;
                 break;
             }
@@ -334,6 +346,7 @@ void TimeSyncMonitor::processAdvertisement(const mesh::Packet* packet, const mes
         repeater_states[slot_index].name[sizeof(repeater_states[slot_index].name) - 1] = '\0';
         repeater_states[slot_index].had_good_time = false;
         repeater_states[slot_index].on_shame_list = false;
+        repeater_states[slot_index].consecutive_bad_count = 0;
     }
     
     // If we couldn't find or create a slot, just return
@@ -351,8 +364,9 @@ void TimeSyncMonitor::processAdvertisement(const mesh::Packet* packet, const mes
     }
     
     // Logic:
-    // - If time is good: mark had_good_time=true, remove from shame list
-    // - If time is bad AND had_good_time=true before: add to shame list
+    // - If time is good: mark had_good_time=true, remove from shame list, reset bad counter
+    // - If time is bad AND had_good_time=true before: increment bad counter
+    // - Add to shame list only after 2 consecutive bad time adverts
     
     bool state_changed = false;
     
@@ -362,23 +376,29 @@ void TimeSyncMonitor::processAdvertisement(const mesh::Packet* packet, const mes
         }
         state->had_good_time = true;
         state->on_shame_list = false;  // Redemption!
+        state->consecutive_bad_count = 0;  // Reset bad counter
     } else {
         // Time is bad
         if (state->had_good_time) {
-            // They had good time before, but now it's bad - shame!
-            state->on_shame_list = true;
+            // They had good time before, but now it's bad
+            state->consecutive_bad_count++;
+            
+            // Only shame after 2 consecutive bad adverts (prevents false positives)
+            if (state->consecutive_bad_count >= 2) {
+                state->on_shame_list = true;
+            }
         }
         // else: never had good time, don't add to shame list yet
     }
     
-    // Save to filesystem when had_good_time changes
+    // Mark save needed when had_good_time changes (non-blocking)
     if (state_changed) {
-        saveGoodTimeList();
+        save_pending = true;
     }
 }
 
-void TimeSyncMonitor::sendShameListMessage(BaseChatMesh& mesh, const char* message) {
-    if (!public_channel || delayed_message_count >= 10) {
+void TimeSyncMonitor::sendShameListMessage(BaseChatMesh& mesh, const char* message, const char* node_name) {
+    if (!public_channel || delayed_message_count >= 10 || !node_name) {
         return;
     }
     
@@ -388,6 +408,8 @@ void TimeSyncMonitor::sendShameListMessage(BaseChatMesh& mesh, const char* messa
             delayed_messages[i].mesh = &mesh;
             strncpy(delayed_messages[i].message, message, sizeof(delayed_messages[i].message) - 1);
             delayed_messages[i].message[sizeof(delayed_messages[i].message) - 1] = '\0';
+            strncpy(delayed_messages[i].sender_name, node_name, sizeof(delayed_messages[i].sender_name) - 1);
+            delayed_messages[i].sender_name[sizeof(delayed_messages[i].sender_name) - 1] = '\0';
             delayed_messages[i].send_time = millis() + (delayed_message_count * MESSAGE_DELAY_MS);
             delayed_messages[i].is_active = true;
             delayed_message_count++;
@@ -481,7 +503,7 @@ bool TimeSyncMonitor::generateShameListMessage(char* output_buffer, size_t buffe
     return true;
 }
 
-void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t current_time) {
+void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t current_time, const char* node_name) {
     if (!public_channel) {
         return;
     }
@@ -498,13 +520,18 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
     // Calculate current day (days since epoch in local timezone)
     uint32_t current_day = local_time / 86400;
     
+    // Early exit optimization: only proceed if we haven't reported today
+    if (current_day == last_report_day) {
+        return;  // Already reported today, skip time calculations
+    }
+    
     // Calculate current hour and minute in local timezone
     uint32_t seconds_today = local_time % 86400;
     uint32_t current_hour = seconds_today / 3600;
     uint32_t current_minute = (seconds_today % 3600) / 60;
     
-    // Check if it's report time and we haven't reported today
-    if (current_hour == DAILY_REPORT_HOUR && current_minute == DAILY_REPORT_MINUTE && current_day != last_report_day) {
+    // Check if it's report time
+    if (current_hour == DAILY_REPORT_HOUR && current_minute == DAILY_REPORT_MINUTE) {
         last_report_day = current_day;
         
         // Build shame list
@@ -563,7 +590,7 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
                     if (msg_pos + 2 + name_len > MAX_MESSAGE_LENGTH) {
                         // Send current message and start new one
                         current_msg[msg_pos] = '\0';
-                        sendShameListMessage(mesh, current_msg);
+                        sendShameListMessage(mesh, current_msg, node_name);
                         
                         // Start new message (continuation doesn't need header)
                         msg_pos = 0;
@@ -589,7 +616,7 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
             // Send final message
             if (msg_pos > 0) {
                 current_msg[msg_pos] = '\0';
-                sendShameListMessage(mesh, current_msg);
+                sendShameListMessage(mesh, current_msg, node_name);
             }
         }
     }
@@ -597,21 +624,13 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
     // Process delayed channel messages
     for (int i = 0; i < 10; i++) {
         if (delayed_messages[i].is_active && millis() >= delayed_messages[i].send_time) {
-            // Send the message
-            uint8_t temp[5 + MAX_TEXT_LEN + 32];
-            uint32_t timestamp = mesh.getRTCClock()->getCurrentTime();
-            memcpy(temp, &timestamp, 4);
-            temp[4] = 0;  // attempt and flags
-            
-            const char* node_name = "TimeSync";  // Use a generic name for the bot
-            snprintf((char*)&temp[5], MAX_TEXT_LEN, "%s: %s", node_name, delayed_messages[i].message);
-            temp[5 + MAX_TEXT_LEN] = 0;  // truncate if too long
-            
-            int len = strlen((char*)&temp[5]);
-            auto pkt = mesh.createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, *public_channel, temp, 5 + len);
-            if (pkt) {
-                mesh.sendFlood(pkt);
-            }
+            // Send the message using sendGroupMessage (proper channel format)
+            delayed_messages[i].mesh->sendGroupMessage(
+                delayed_messages[i].mesh->getRTCClock()->getCurrentTime(), 
+                const_cast<mesh::GroupChannel&>(*public_channel), 
+                delayed_messages[i].sender_name, 
+                delayed_messages[i].message, 
+                strlen(delayed_messages[i].message));
             
             delayed_messages[i].is_active = false;
             delayed_message_count--;
