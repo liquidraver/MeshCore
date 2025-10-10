@@ -40,7 +40,9 @@ class CustomLR1110 : public LR1110 {
 
     bool isReceiving() {
       uint16_t irq = getIrqStatus();
-      bool detected = ((irq & LR1110_IRQ_HEADER_VALID) || (irq & LR1110_IRQ_HAS_PREAMBLE));
+      // Only check for valid header (after sync word validation), not preamble
+      // This prevents false positives from other LoRa networks on same freq/BW/SF
+      bool detected = (irq & LR1110_IRQ_HEADER_VALID);
       return detected;
     }
 };

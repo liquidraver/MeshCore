@@ -81,7 +81,9 @@ class CustomSX1268 : public SX1268 {
 
     bool isReceiving() {
       uint16_t irq = getIrqFlags();
-      bool detected = (irq & SX126X_IRQ_HEADER_VALID) || (irq & SX126X_IRQ_PREAMBLE_DETECTED);
+      // Only check for valid header (after sync word validation), not preamble
+      // This prevents false positives from other LoRa networks on same freq/BW/SF
+      bool detected = (irq & SX126X_IRQ_HEADER_VALID);
       return detected;
     }
 };

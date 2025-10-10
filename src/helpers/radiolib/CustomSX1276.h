@@ -66,10 +66,9 @@ class CustomSX1276 : public SX1276 {
     }
 
     bool isReceiving() {
-      return (getModemStatus() &
-         (RH_RF95_MODEM_STATUS_SIGNAL_DETECTED
-        | RH_RF95_MODEM_STATUS_SIGNAL_SYNCHRONIZED
-        | RH_RF95_MODEM_STATUS_HEADER_INFO_VALID)) != 0;
+      // Only check for valid header (after sync word validation), not preamble
+      // This prevents false positives from other LoRa networks on same freq/BW/SF
+      return (getModemStatus() & RH_RF95_MODEM_STATUS_HEADER_INFO_VALID) != 0;
     }
 
     int tryScanChannel() {
