@@ -791,7 +791,9 @@ protected:
           }
           
           // Per-sender 15-second cooldown (allows multiple people to ping simultaneously)
-          if (PingPongHelper::canRespondToChannelSender(sender_name, 15000)) {
+          bool canRespond = PingPongHelper::canRespondToChannelSender(sender_name, 15000);
+          
+          if (canRespond) {
             // Get RSSI from radio
             float rssi = 0.0;
             if (getRadio()) {
