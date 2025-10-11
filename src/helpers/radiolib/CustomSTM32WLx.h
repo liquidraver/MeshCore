@@ -11,9 +11,7 @@ class CustomSTM32WLx : public STM32WLx {
 
     bool isReceiving() {
       uint16_t irq = getIrqFlags();
-      // Only check for valid header (after sync word validation), not preamble
-      // This prevents false positives from other LoRa networks on same freq/BW/SF
-      bool detected = (irq & SX126X_IRQ_HEADER_VALID);
+      bool detected = (irq & SX126X_IRQ_HEADER_VALID) || (irq & SX126X_IRQ_PREAMBLE_DETECTED);
       return detected;
     }
 };
