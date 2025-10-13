@@ -14,6 +14,7 @@
   #else
     #include <helpers/ui/SH1106Display.h>
   #endif
+  #include <helpers/ui/NullDisplayDriver.h>
   #include <helpers/ui/MomentaryButton.h>
 #endif
 #include <helpers/sensors/EnvironmentSensorManager.h>
