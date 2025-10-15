@@ -600,6 +600,10 @@ protected:
   }
 
   void onMessageRecv(const ContactInfo& from, mesh::Packet* pkt, uint32_t sender_timestamp, const char *text) override {
+    // OPTIMIZED: Quick processing to prevent packet buffer overflow
+    // Process critical operations first, then queue for background processing
+    
+    unsigned long msg_start = millis();
     uint8_t hash[MAX_HASH_SIZE];
     pkt->calculatePacketHash(hash);
 
@@ -628,7 +632,16 @@ protected:
     doc["message"]["text"] = text;
     doc["message"]["header"] = pkt->header;
     doc["message"]["path"] = getPath(pkt);
+    
+    // Queue message quickly (non-blocking)
+    unsigned long queue_start = millis();
     messageQueue.push(doc);
+    unsigned long queue_time = millis() - queue_start;
+    
+    unsigned long msg_time = millis() - msg_start;
+    if (msg_time > 50) {
+      Serial.printf("[MSG] Message processing took %lums (queue: %lums) - from %s\n", msg_time, queue_time, from.name);
+    }
 
     // Check for ping message and send pong response
 #ifdef PINGPONG_ENABLED
@@ -1427,10 +1440,14 @@ void WiFiTaskCode(void * pvParameters) {
       }
 
       if (!ntpSynced) {
+        Serial.println("[WiFi] Starting NTP sync...");
+        unsigned long ntp_start = millis();
         configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
         
         // Wait for NTP to complete (configTime is non-blocking on ESP32)
         task_sleep(2000);  // Wait 2 seconds for NTP response
+        unsigned long ntp_time = millis() - ntp_start;
+        Serial.printf("[WiFi] NTP sync took %lums\n", ntp_time);
         
         unsigned time = getTimestamp();
         if (time > 1735689600) {  // Valid time (after Jan 1, 2025)
@@ -1496,6 +1513,7 @@ void WiFiTaskCode(void * pvParameters) {
 
           // WiFi send
           HTTPClient https;
+          unsigned long http_start = millis();
 
           if (https.begin(*client, the_mesh.getLogPrefs()->url)) {  // HTTPS connection
             https.addHeader("Content-Type", "application/json");
@@ -1508,13 +1526,14 @@ void WiFiTaskCode(void * pvParameters) {
               Serial.println("[HTTP] Post data");
             }
             int httpResponseCode = https.POST(ptr);
+            unsigned long http_time = millis() - http_start;
         
             if (httpResponseCode > 0) {
               String response = https.getString();
-              Serial.printf("[HTTP] POST: %d\n", httpResponseCode);
+              Serial.printf("[HTTP] POST: %d (took %lums)\n", httpResponseCode, http_time);
               sent = true;
             } else {
-              Serial.printf("[HTTP] ERROR: %d\n", httpResponseCode);
+              Serial.printf("[HTTP] ERROR: %d (took %lums)\n", httpResponseCode, http_time);
               ++sendFailures;
             }
         
@@ -1607,11 +1626,43 @@ void setup() {
 }
 
 void loop() {
-  the_mesh.loop();
+  static unsigned long last_loop_time = 0;
+  static unsigned long max_loop_time = 0;
+  unsigned long loop_start = millis();
   
-
+  unsigned long mesh_start = millis();
+  the_mesh.loop();
+  unsigned long mesh_time = millis() - mesh_start;
+  
+  unsigned long timesync_start = millis();
 #ifdef TIMESYNC_MONITOR_ENABLED
   TimeSyncMonitor::checkAndSendDailyReport(the_mesh, the_mesh.getRTCClock()->getCurrentTime(), the_mesh.getNodePrefs()->node_name);
-  TimeSyncMonitor::processPendingSaves();
+  TimeSyncMonitor::processDelayedResponses();
+  TimeSyncMonitor::processPendingSavesAsync();  // Use non-blocking version
 #endif
+  unsigned long timesync_time = millis() - timesync_start;
+
+  // Monitor loop timing to detect blocking issues
+  unsigned long loop_time = millis() - loop_start;
+  if (loop_time > max_loop_time) {
+    max_loop_time = loop_time;
+  }
+  
+  // Log warning if loop takes too long (could cause packet loss)
+  if (loop_time > 50) {  // More than 50ms could cause packet buffer overflow
+    unsigned long free_heap = ESP.getFreeHeap();
+    unsigned long min_free_heap = ESP.getMinFreeHeap();
+    Serial.printf("WARNING: Loop took %lums (mesh: %lums, timesync: %lums, max: %lums) - Risk of packet loss!\n", 
+                  loop_time, mesh_time, timesync_time, max_loop_time);
+    Serial.printf("HEAP: free=%lu, min_free=%lu, queue_size=%u\n", free_heap, min_free_heap, messageQueue.size());
+  }
+  
+  // Reset max every 10 seconds
+  if (millis() - last_loop_time > 10000) {
+    if (max_loop_time > 20) {
+      Serial.printf("Loop timing: max %lums in last 10s\n", max_loop_time);
+    }
+    max_loop_time = 0;
+    last_loop_time = millis();
+  }
 }

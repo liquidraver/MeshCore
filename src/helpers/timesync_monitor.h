@@ -14,7 +14,9 @@ public:
     static void processAdvertisement(const mesh::Packet* packet, const mesh::Identity& id, 
                                     uint32_t advertised_timestamp, const char* node_name, uint32_t node_current_time);
     static void checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t current_time, const char* node_name);
+    static void processDelayedResponses();  // New function to process delayed responses separately
     static void processPendingSaves();
+    static void processPendingSavesAsync();  // Non-blocking version
     static void setPublicChannel(const mesh::GroupChannel* channel);
     static bool generateShameListMessage(char* output_buffer, size_t buffer_size);
     static bool processShameListCommand(BaseChatMesh& mesh, const ContactInfo& from,

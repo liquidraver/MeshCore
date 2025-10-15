@@ -14,9 +14,9 @@
 
 #define MAX_TRACKED_REPEATERS 350
 #define SEVEN_DAYS_SECONDS 604800
-#define DAILY_REPORT_HOUR 10          // Local time hour (24h format)
-#define DAILY_REPORT_MINUTE 0         // Local time minute
-#define MESSAGE_DELAY_MS 5000
+#define DAILY_REPORT_HOUR 9          // UTC time hour (24h format)
+#define DAILY_REPORT_MINUTE 0         // UTC time minute
+#define MESSAGE_DELAY_MS 2000
 #define MAX_MESSAGE_LENGTH 150
 #define MAX_PACKET_CACHE 50
 #define CACHE_EXPIRE_TIME_MS 60000
@@ -32,22 +32,6 @@ struct RepeaterTimeState {
     bool is_active;                  // Slot is in use
 };
 
-struct DelayedShameMessage {
-    BaseChatMesh* mesh;
-    char message[256];
-    char sender_name[32];
-    uint32_t send_time;
-    bool is_active;
-};
-
-struct DelayedDirectResponse {
-    BaseChatMesh* mesh;
-    ContactInfo contact;
-    char response[512];
-    uint32_t send_time;
-    bool is_active;
-};
-
 struct PacketCacheEntry {
     uint8_t hash[CACHE_HASH_SIZE];
     uint32_t timestamp;
@@ -56,96 +40,13 @@ struct PacketCacheEntry {
 static RepeaterTimeState repeater_states[MAX_TRACKED_REPEATERS];
 static const mesh::GroupChannel* public_channel = nullptr;
 static uint32_t last_report_day = 0;  // Track which day we last reported
-static DelayedShameMessage delayed_messages[10];  // Support up to 10 continuation messages
-static uint8_t delayed_message_count = 0;
-static DelayedDirectResponse delayed_direct_responses[5];  // Direct message responses
-static uint8_t direct_response_count = 0;
 static PacketCacheEntry packet_cache[MAX_PACKET_CACHE];
 static uint8_t cache_index = 0;
 static FILESYSTEM* fs_instance = nullptr;
 static const char* fs_storage_path = "/timesync_good";
 static bool save_pending = false;
 
-// Calculate if DST is active for Europe/Budapest at given UTC timestamp
-// DST: Last Sunday of March 01:00 UTC -> Last Sunday of October 01:00 UTC
-static bool isDSTActive(uint32_t utc_time) {
-    // Calculate year and day of year
-    uint32_t days_since_epoch = utc_time / 86400;
-    uint32_t seconds_today = utc_time % 86400;
-    
-    // Approximate year (won't be exact but close enough for DST calculation)
-    uint32_t year = 1970 + (days_since_epoch / 365);
-    
-    // Calculate Jan 1 of this year
-    uint32_t years_since_1970 = year - 1970;
-    uint32_t leap_years = (years_since_1970 + 1) / 4;  // Approximate leap years
-    uint32_t jan1_days = (years_since_1970 * 365) + leap_years;
-    
-    // Days into current year
-    int32_t day_of_year = days_since_epoch - jan1_days;
-    
-    // Handle year boundary issues
-    if (day_of_year < 0) {
-        year--;
-        years_since_1970 = year - 1970;
-        leap_years = (years_since_1970 + 1) / 4;
-        jan1_days = (years_since_1970 * 365) + leap_years;
-        day_of_year = days_since_epoch - jan1_days;
-    }
-    
-    // Check if leap year
-    bool is_leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
-    
-    // Calculate day of week for Jan 1 (0 = Sunday)
-    uint32_t jan1_dow = (jan1_days + 4) % 7;  // Jan 1, 1970 was Thursday (4)
-    
-    // Find last Sunday of March (day 59 or 60 in non-leap/leap year is March 1)
-    uint32_t march1_day = is_leap ? 60 : 59;
-    uint32_t march1_dow = (jan1_dow + march1_day) % 7;
-    
-    // Days in March = 31, so last day is March 31 = march1_day + 30
-    uint32_t march31_day = march1_day + 30;
-    uint32_t march31_dow = (march1_dow + 30) % 7;
-    
-    // Last Sunday of March
-    uint32_t last_sunday_march = march31_day;
-    if (march31_dow != 0) {  // If March 31 is not Sunday
-        last_sunday_march -= march31_dow;
-    }
-    
-    // Find last Sunday of October (day 273 or 274 in non-leap/leap year is Oct 1)
-    uint32_t oct1_day = is_leap ? 274 : 273;
-    uint32_t oct1_dow = (jan1_dow + oct1_day) % 7;
-    
-    // Days in October = 31, so last day is Oct 31 = oct1_day + 30
-    uint32_t oct31_day = oct1_day + 30;
-    uint32_t oct31_dow = (oct1_dow + 30) % 7;
-    
-    // Last Sunday of October
-    uint32_t last_sunday_oct = oct31_day;
-    if (oct31_dow != 0) {  // If Oct 31 is not Sunday
-        last_sunday_oct -= oct31_dow;
-    }
-    
-    // DST starts at 01:00 UTC on last Sunday of March
-    // DST ends at 01:00 UTC on last Sunday of October
-    bool after_dst_start = (day_of_year > last_sunday_march) || 
-                           (day_of_year == last_sunday_march && seconds_today >= 3600);
-    bool before_dst_end = (day_of_year < last_sunday_oct) || 
-                          (day_of_year == last_sunday_oct && seconds_today < 3600);
-    
-    return after_dst_start && before_dst_end;
-}
-
-// Get Europe/Budapest timezone offset (automatically handles DST)
-// Returns 1 (UTC+1) if node time is not synced yet
-static int getBudapestTimezoneOffset(uint32_t utc_time) {
-    // Only calculate DST if node has good time (after sanity check date)
-    if (utc_time < TIMESYNC_SANITY_CHECK_EPOCH) {
-        return 1;  // Default to UTC+1 if time not synced
-    }
-    return isDSTActive(utc_time) ? 2 : 1;  // UTC+2 in summer, UTC+1 in winter
-}
+// Simplified: Use UTC time directly, no timezone/DST calculations
 
 static bool isPacketExpired(uint32_t timestamp) {
     uint32_t current_time = millis();
@@ -157,17 +58,11 @@ static bool isPacketExpired(uint32_t timestamp) {
     }
 }
 
-// Forward declaration
-static void scheduleDelayedDirectResponse(BaseChatMesh& mesh, const ContactInfo& from, 
-                                         const char* response, uint32_t delay_ms);
+// Forward declaration removed - no longer needed
 
 void TimeSyncMonitor::begin(void* filesystem, const char* storage_path) {
     memset(repeater_states, 0, sizeof(repeater_states));
-    memset(delayed_messages, 0, sizeof(delayed_messages));
-    memset(delayed_direct_responses, 0, sizeof(delayed_direct_responses));
     memset(packet_cache, 0, sizeof(packet_cache));
-    delayed_message_count = 0;
-    direct_response_count = 0;
     last_report_day = 0;
     cache_index = 0;
     save_pending = false;
@@ -183,6 +78,17 @@ void TimeSyncMonitor::begin(void* filesystem, const char* storage_path) {
 
 void TimeSyncMonitor::processPendingSaves() {
     if (save_pending) {
+        save_pending = false;
+        saveGoodTimeList();
+    }
+}
+
+void TimeSyncMonitor::processPendingSavesAsync() {
+    // Non-blocking version: just mark that save is needed
+    // The actual save will happen in a background task or during idle time
+    if (save_pending) {
+        // For now, we'll still do the save but could be moved to background task
+        // This is a placeholder for future async implementation
         save_pending = false;
         saveGoodTimeList();
     }
@@ -398,24 +304,32 @@ void TimeSyncMonitor::processAdvertisement(const mesh::Packet* packet, const mes
 }
 
 void TimeSyncMonitor::sendShameListMessage(BaseChatMesh& mesh, const char* message, const char* node_name) {
-    if (!public_channel || delayed_message_count >= 10 || !node_name) {
+    if (!public_channel || !node_name) {
         return;
     }
     
-    // Find an empty slot
-    for (int i = 0; i < 10; i++) {
-        if (!delayed_messages[i].is_active) {
-            delayed_messages[i].mesh = &mesh;
-            strncpy(delayed_messages[i].message, message, sizeof(delayed_messages[i].message) - 1);
-            delayed_messages[i].message[sizeof(delayed_messages[i].message) - 1] = '\0';
-            strncpy(delayed_messages[i].sender_name, node_name, sizeof(delayed_messages[i].sender_name) - 1);
-            delayed_messages[i].sender_name[sizeof(delayed_messages[i].sender_name) - 1] = '\0';
-            delayed_messages[i].send_time = millis() + (delayed_message_count * MESSAGE_DELAY_MS);
-            delayed_messages[i].is_active = true;
-            delayed_message_count++;
-            break;
-        }
+    // Use MeshCore's built-in delayed send system for channel messages (like PingPongHelper)
+    uint8_t temp[5+MAX_TEXT_LEN+32];
+    uint32_t timestamp = mesh.getRTCClock()->getCurrentTime();
+    memcpy(temp, &timestamp, 4);
+    temp[4] = 0;  // TXT_TYPE_PLAIN
+
+    // Format: <sender_name>: <response>
+    sprintf((char *) &temp[5], "%s: %s", node_name, message);
+    temp[5 + MAX_TEXT_LEN] = 0;  // truncate if too long
+
+    int len = strlen((char *) &temp[5]);
+    auto pkt = mesh.createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, *public_channel, temp, 5 + len);
+    if (!pkt) {
+        return; // Packet pool full
     }
+    
+    // Use MeshCore's built-in delayed send with staggered delays to prevent simultaneous messages
+    static uint8_t message_counter = 0;
+    uint32_t delay = MESSAGE_DELAY_MS + (message_counter * 1000); // Stagger by 1 second each
+    message_counter = (message_counter + 1) % 10; // Reset after 10 messages
+    
+    mesh.sendFlood(pkt, delay);
 }
 
 bool TimeSyncMonitor::processShameListCommand(BaseChatMesh& mesh, const ContactInfo& from,
@@ -440,31 +354,31 @@ bool TimeSyncMonitor::processShameListCommand(BaseChatMesh& mesh, const ContactI
     // Generate the shame list message
     char shame_message[512];
     if (generateShameListMessage(shame_message, sizeof(shame_message))) {
-        // Schedule delayed response (allows ACK to be sent first)
-        scheduleDelayedDirectResponse(mesh, from, shame_message, 5000);
+        // Use MeshCore's built-in delayed send system (like PingPongHelper)
+        int text_len = strlen(shame_message);
+        if (text_len > MAX_TEXT_LEN) {
+            return true; // Message too long, but we handled the command
+        }
+        
+        uint8_t temp[5+MAX_TEXT_LEN+1];
+        uint32_t timestamp = mesh.getRTCClock()->getCurrentTime();
+        memcpy(temp, &timestamp, 4);
+        temp[4] = 0;  // attempt = 0
+        memcpy(&temp[5], shame_message, text_len + 1);
+        
+        mesh::Packet* response_pkt = mesh.createDatagram(PAYLOAD_TYPE_TXT_MSG, from.id, from.shared_secret, temp, 5 + text_len);
+        
+        if (response_pkt) {
+            // Send with 2-second delay using MeshCore's built-in system
+            if (from.out_path_len < 0) {
+                mesh.sendFlood(response_pkt, MESSAGE_DELAY_MS);
+            } else {
+                mesh.sendDirect(response_pkt, from.out_path, from.out_path_len, MESSAGE_DELAY_MS);
+            }
+        }
     }
     
     return true;
-}
-
-static void scheduleDelayedDirectResponse(BaseChatMesh& mesh, const ContactInfo& from, 
-                                         const char* response, uint32_t delay_ms) {
-    if (!response || direct_response_count >= 5) {
-        return;
-    }
-    
-    for (int i = 0; i < 5; i++) {
-        if (!delayed_direct_responses[i].is_active) {
-            delayed_direct_responses[i].mesh = &mesh;
-            delayed_direct_responses[i].contact = from;
-            strncpy(delayed_direct_responses[i].response, response, sizeof(delayed_direct_responses[i].response) - 1);
-            delayed_direct_responses[i].response[sizeof(delayed_direct_responses[i].response) - 1] = '\0';
-            delayed_direct_responses[i].send_time = millis() + delay_ms;
-            delayed_direct_responses[i].is_active = true;
-            direct_response_count++;
-            break;
-        }
-    }
 }
 
 bool TimeSyncMonitor::generateShameListMessage(char* output_buffer, size_t buffer_size) {
@@ -473,7 +387,7 @@ bool TimeSyncMonitor::generateShameListMessage(char* output_buffer, size_t buffe
     }
     
     // Build shame list with newlines
-    int pos = snprintf(output_buffer, buffer_size, "NoTimeSyncShameList:");
+    int pos = snprintf(output_buffer, buffer_size, "SHAME 🔔 SYNC YOUR TIME!");
     
     bool has_offenders = false;
     for (int i = 0; i < MAX_TRACKED_REPEATERS; i++) {
@@ -495,12 +409,18 @@ bool TimeSyncMonitor::generateShameListMessage(char* output_buffer, size_t buffe
     }
     
     if (!has_offenders) {
-        snprintf(output_buffer, buffer_size, "NoTimeSyncShameList:\n(empty - all repeaters in sync!)");
+        snprintf(output_buffer, buffer_size, "SHAME 🔔 SYNC YOUR TIME!\n(empty - all repeaters in sync!)");
         return true;
     }
     
     output_buffer[pos] = '\0';
     return true;
+}
+
+void TimeSyncMonitor::processDelayedResponses() {
+    // This function is now empty since we use MeshCore's built-in delayed send system
+    // Direct responses are handled immediately in processShameListCommand()
+    // Channel messages are still processed in checkAndSendDailyReport()
 }
 
 void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t current_time, const char* node_name) {
@@ -513,30 +433,29 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
         return;
     }
     
-    // Apply timezone offset to get local time (automatically handles DST)
-    int timezone_offset_hours = getBudapestTimezoneOffset(current_time);
-    uint32_t local_time = current_time + (timezone_offset_hours * 3600);
+    // Use UTC time directly (no timezone calculations)
+    uint32_t utc_time = current_time;
     
-    // Calculate current day (days since epoch in local timezone)
-    uint32_t current_day = local_time / 86400;
+    // Calculate current day (days since epoch in UTC)
+    uint32_t current_day = utc_time / 86400;
     
     // Early exit optimization: only proceed if we haven't reported today
     if (current_day == last_report_day) {
         return;  // Already reported today, skip time calculations
     }
     
-    // Calculate current hour and minute in local timezone
-    uint32_t seconds_today = local_time % 86400;
+    // Calculate current hour and minute in UTC
+    uint32_t seconds_today = utc_time % 86400;
     uint32_t current_hour = seconds_today / 3600;
     uint32_t current_minute = (seconds_today % 3600) / 60;
     
-    // Check if it's report time
+    // Check if it's report time (9:00 AM UTC)
     if (current_hour == DAILY_REPORT_HOUR && current_minute == DAILY_REPORT_MINUTE) {
         last_report_day = current_day;
         
         // Build shame list
         char shame_list[1024];
-        int pos = snprintf(shame_list, sizeof(shame_list), "NoTimeSyncShameList:");
+        int pos = snprintf(shame_list, sizeof(shame_list), "SHAME 🔔 SYNC YOUR TIME!");
         
         bool has_offenders = false;
         for (int i = 0; i < MAX_TRACKED_REPEATERS; i++) {
@@ -564,12 +483,12 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
             int msg_start = 0;
             int msg_pos = 0;
             
-            // First message starts with "NoTimeSyncShameList:"
-            strncpy(current_msg, "NoTimeSyncShameList:", sizeof(current_msg) - 1);
+            // First message starts with "SHAME 🔔 SYNC YOUR TIME!"
+            strncpy(current_msg, "SHAME 🔔 SYNC YOUR TIME!", sizeof(current_msg) - 1);
             msg_pos = strlen(current_msg);
             
             // Skip the header in shame_list
-            int list_pos = strlen("NoTimeSyncShameList:");
+            int list_pos = strlen("SHAME 🔔 SYNC YOUR TIME!");
             
             // Process each name
             while (list_pos < pos) {
@@ -618,39 +537,6 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
                 current_msg[msg_pos] = '\0';
                 sendShameListMessage(mesh, current_msg, node_name);
             }
-        }
-    }
-    
-    // Process delayed channel messages
-    for (int i = 0; i < 10; i++) {
-        if (delayed_messages[i].is_active && millis() >= delayed_messages[i].send_time) {
-            // Send the message using sendGroupMessage (proper channel format)
-            delayed_messages[i].mesh->sendGroupMessage(
-                delayed_messages[i].mesh->getRTCClock()->getCurrentTime(), 
-                const_cast<mesh::GroupChannel&>(*public_channel), 
-                delayed_messages[i].sender_name, 
-                delayed_messages[i].message, 
-                strlen(delayed_messages[i].message));
-            
-            delayed_messages[i].is_active = false;
-            delayed_message_count--;
-        }
-    }
-    
-    // Process delayed direct responses
-    for (int i = 0; i < 5; i++) {
-        if (delayed_direct_responses[i].is_active && millis() >= delayed_direct_responses[i].send_time) {
-            uint32_t expected_ack, est_timeout;
-            delayed_direct_responses[i].mesh->sendMessage(
-                delayed_direct_responses[i].contact, 
-                delayed_direct_responses[i].mesh->getRTCClock()->getCurrentTime(), 
-                0, 
-                delayed_direct_responses[i].response, 
-                expected_ack, 
-                est_timeout);
-            
-            delayed_direct_responses[i].is_active = false;
-            direct_response_count--;
         }
     }
 }
