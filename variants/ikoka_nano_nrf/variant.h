@@ -1,5 +1,5 @@
-#ifndef _IKOKA_STICK_NRF_H_
-#define _IKOKA_STICK_NRF_H_
+#ifndef _IKOKA_NANO_NRF_H_
+#define _IKOKA_NANO_NRF_H_
 
 /** Master clock frequency */
 #define VARIANT_MCK       (64000000ul)
@@ -38,7 +38,7 @@ extern "C"
 #define LED_STATE_ON            (0)     // State when LED is litted
 
 // Buttons
-#define PIN_BUTTON1             (PINS_COUNT)
+// #define PIN_BUTTON1             (PINS_COUNT)
 
 // Digital PINs
 static const uint8_t D0  = 0 ;
