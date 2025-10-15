@@ -4,33 +4,8 @@
 
 #ifdef PINGPONG_ENABLED
 
-#define MAX_PACKET_CACHE 50
-#define CACHE_EXPIRE_TIME_MS 60000
-#define CACHE_HASH_SIZE 6
 #define MAX_SENDER_COOLDOWN 10
 #define SENDER_COOLDOWN_EXPIRE_MS 60000
-
-struct PacketCacheEntry {
-    uint8_t hash[CACHE_HASH_SIZE];
-    uint32_t timestamp;
-};
-
-struct DelayedResponse {
-    BaseChatMesh* mesh;
-    ContactInfo contact;
-    char response[256];
-    uint32_t send_time;
-    bool is_active;
-};
-
-struct DelayedChannelResponse {
-    BaseChatMesh* mesh;
-    mesh::GroupChannel channel;
-    char response[256];
-    char sender_name[32];
-    uint32_t send_time;
-    bool is_active;
-};
 
 struct SenderCooldown {
     char sender_name[32];
@@ -38,67 +13,12 @@ struct SenderCooldown {
     bool is_active;
 };
 
-static PacketCacheEntry packet_cache[MAX_PACKET_CACHE];
-static uint8_t cache_index = 0;
 static SenderCooldown sender_cooldowns[MAX_SENDER_COOLDOWN];
 
-static DelayedResponse delayed_responses[5];
-static DelayedChannelResponse delayed_channel_responses[5];
-static uint8_t response_count = 0;
-static uint8_t channel_response_count = 0;
-
 void PingPongHelper::begin() {
-    memset(packet_cache, 0, sizeof(packet_cache));
     memset(sender_cooldowns, 0, sizeof(sender_cooldowns));
-    memset(delayed_responses, 0, sizeof(delayed_responses));
-    memset(delayed_channel_responses, 0, sizeof(delayed_channel_responses));
-    cache_index = 0;
-    response_count = 0;
-    channel_response_count = 0;
 }
 
-static bool isPacketExpired(uint32_t timestamp) {
-    uint32_t current_time = millis();
-    if (current_time >= timestamp) {
-        return (current_time - timestamp) >= CACHE_EXPIRE_TIME_MS;
-    } else {
-        uint32_t diff = (0xFFFFFFFF - timestamp) + current_time + 1;
-        return diff >= CACHE_EXPIRE_TIME_MS;
-    }
-}
-
-bool PingPongHelper::hasRespondedToPacket(const uint8_t* packet_hash) {
-    if (!packet_hash) return false;
-    
-    for (int i = 0; i < MAX_PACKET_CACHE; i++) {
-        if (packet_cache[i].timestamp != 0 && 
-            !isPacketExpired(packet_cache[i].timestamp)) {
-            if (memcmp(packet_cache[i].hash, packet_hash, CACHE_HASH_SIZE) == 0) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-void PingPongHelper::markPacketResponded(const uint8_t* packet_hash) {
-    if (!packet_hash) return;
-    
-    int slot_to_use = cache_index;
-    for (int i = 0; i < MAX_PACKET_CACHE; i++) {
-        int check_index = (cache_index + i) % MAX_PACKET_CACHE;
-        if (packet_cache[check_index].timestamp == 0 || 
-            isPacketExpired(packet_cache[check_index].timestamp)) {
-            slot_to_use = check_index;
-            break;
-        }
-    }
-    
-    memcpy(packet_cache[slot_to_use].hash, packet_hash, CACHE_HASH_SIZE);
-    packet_cache[slot_to_use].timestamp = millis();
-    
-    cache_index = (cache_index + 1) % MAX_PACKET_CACHE;
-}
 
 bool PingPongHelper::isPingMessage(const char* text) {
     if (!text) return false;
@@ -212,17 +132,13 @@ bool PingPongHelper::processMessage(BaseChatMesh& mesh, const ContactInfo& from,
         return false;
     }
 
-    uint8_t packet_hash[MAX_HASH_SIZE];
-    packet->calculatePacketHash(packet_hash);
+    Serial.printf("[PING] Detected ping from %s\n", from.name);
     
-    if (hasRespondedToPacket(packet_hash)) {
-        return false;
-    }
-
     uint8_t hop_count = packet->path_len;
     char router_ids_buffer[256];
     
     if (!extractPathInfo(packet, hop_count, router_ids_buffer, sizeof(router_ids_buffer))) {
+        Serial.println("[PING] ERROR: Failed to extract path info");
         return false;
     }
     
@@ -232,57 +148,76 @@ bool PingPongHelper::processMessage(BaseChatMesh& mesh, const ContactInfo& from,
     }
 
     char response[256];
-    if (generatePongResponse(from.name, hop_count, router_ids_buffer, packet->getSNR(), rssi, false, response, sizeof(response))) {
-        markPacketResponded(packet_hash);
-        // Randomized delay 3-10 seconds to prevent simultaneous responses
-        uint32_t delay = mesh.getRNG()->nextInt(3000, 10001);
-        scheduleDelayedResponse(mesh, from, response, delay);
-        return true;
+    if (!generatePongResponse(from.name, hop_count, router_ids_buffer, packet->getSNR(), rssi, false, response, sizeof(response))) {
+        Serial.println("[PING] ERROR: Failed to generate pong response");
+        return false;
     }
     
-    return false;
-}
-
-void PingPongHelper::scheduleDelayedResponse(BaseChatMesh& mesh, const ContactInfo& from, 
-                                           const char* response, uint32_t delay_ms) {
-    if (!response || response_count >= 5) {
-        return;
+    Serial.printf("[PING] Generated response: %s\n", response);
+    
+    // Create pong message packet manually (composeMsgPacket is private)
+    int text_len = strlen(response);
+    if (text_len > MAX_TEXT_LEN) {
+        Serial.printf("[PING] ERROR: Response too long (%d > %d)\n", text_len, MAX_TEXT_LEN);
+        return false;
     }
     
-    for (int i = 0; i < 5; i++) {
-        if (!delayed_responses[i].is_active) {
-            delayed_responses[i].mesh = &mesh;
-            delayed_responses[i].contact = from;
-            strncpy(delayed_responses[i].response, response, sizeof(delayed_responses[i].response) - 1);
-            delayed_responses[i].response[sizeof(delayed_responses[i].response) - 1] = '\0';
-            delayed_responses[i].send_time = millis() + delay_ms;
-            delayed_responses[i].is_active = true;
-            response_count++;
-            break;
-        }
+    uint8_t temp[5+MAX_TEXT_LEN+1];
+    uint32_t timestamp = mesh.getRTCClock()->getCurrentTime();
+    memcpy(temp, &timestamp, 4);
+    temp[4] = 0;  // attempt = 0
+    memcpy(&temp[5], response, text_len + 1);
+    
+    mesh::Packet* pong_pkt = mesh.createDatagram(PAYLOAD_TYPE_TXT_MSG, from.id, from.shared_secret, temp, 5 + text_len);
+    
+    if (!pong_pkt) {
+        Serial.println("[PING] ERROR: Failed to create datagram (packet pool full?)");
+        return false;
     }
+    
+    // Randomized delay 1-3 seconds to prevent simultaneous responses
+    uint32_t delay = mesh.getRNG()->nextInt(1000, 3001);
+    
+    Serial.printf("[PING] Queueing pong to %s with %dms delay (path_len=%d)\n", 
+                  from.name, delay, from.out_path_len);
+    
+    // Use MeshCore's built-in delayed send queue
+    if (from.out_path_len < 0) {
+        mesh.sendFlood(pong_pkt, delay);
+        Serial.println("[PING] Queued as FLOOD");
+    } else {
+        mesh.sendDirect(pong_pkt, from.out_path, from.out_path_len, delay);
+        Serial.println("[PING] Queued as DIRECT");
+    }
+    
+    return true;
 }
 
 void PingPongHelper::scheduleDelayedChannelResponse(BaseChatMesh& mesh, const mesh::GroupChannel& channel, 
                                                    const char* response, uint32_t delay_ms, const char* sender_name) {
-    if (!response || channel_response_count >= 5) {
+    Serial.printf("[PING-CH] Scheduling channel pong for sender: %s\n", sender_name);
+    
+    // Create channel message packet and send with delay using MeshCore's built-in system
+    uint8_t temp[5+MAX_TEXT_LEN+32];
+    uint32_t timestamp = mesh.getRTCClock()->getCurrentTime();
+    memcpy(temp, &timestamp, 4);
+    temp[4] = 0;  // TXT_TYPE_PLAIN
+
+    // Format: <sender_name>: <response>
+    sprintf((char *) &temp[5], "%s: %s", sender_name, response);
+    temp[5 + MAX_TEXT_LEN] = 0;  // truncate if too long
+
+    int len = strlen((char *) &temp[5]);
+    auto pkt = mesh.createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, temp, 5 + len);
+    if (!pkt) {
+        Serial.println("[PING-CH] ERROR: Failed to create group datagram (packet pool full?)");
         return;
     }
     
-    for (int i = 0; i < 5; i++) {
-        if (!delayed_channel_responses[i].is_active) {
-            delayed_channel_responses[i].mesh = &mesh;
-            delayed_channel_responses[i].channel = channel;
-            strncpy(delayed_channel_responses[i].response, response, sizeof(delayed_channel_responses[i].response) - 1);
-            delayed_channel_responses[i].response[sizeof(delayed_channel_responses[i].response) - 1] = '\0';
-            strncpy(delayed_channel_responses[i].sender_name, sender_name, sizeof(delayed_channel_responses[i].sender_name) - 1);
-            delayed_channel_responses[i].sender_name[sizeof(delayed_channel_responses[i].sender_name) - 1] = '\0';
-            delayed_channel_responses[i].send_time = millis() + delay_ms;
-            delayed_channel_responses[i].is_active = true;
-            channel_response_count++;
-            break;
-        }
-    }
+    Serial.printf("[PING-CH] Queueing channel pong with %dms delay\n", delay_ms);
+    // Use MeshCore's built-in delayed send
+    mesh.sendFlood(pkt, delay_ms);
+    Serial.println("[PING-CH] Queued successfully");
 }
 
 bool PingPongHelper::canRespondToChannelSender(const char* sender_name, uint32_t cooldown_ms) {
@@ -337,29 +272,5 @@ bool PingPongHelper::canRespondToChannelSender(const char* sender_name, uint32_t
     return true;
 }
 
-void PingPongHelper::processScheduledResponses() {
-    for (int i = 0; i < 5; i++) {
-        if (delayed_responses[i].is_active && millis() >= delayed_responses[i].send_time) {
-            uint32_t expected_ack, est_timeout;
-            int result = delayed_responses[i].mesh->sendMessage(
-                delayed_responses[i].contact, delayed_responses[i].mesh->getRTCClock()->getCurrentTime(), 0, 
-                delayed_responses[i].response, expected_ack, est_timeout);
-            
-            delayed_responses[i].is_active = false;
-            response_count--;
-        }
-    }
-    
-    for (int i = 0; i < 5; i++) {
-        if (delayed_channel_responses[i].is_active && millis() >= delayed_channel_responses[i].send_time) {
-            delayed_channel_responses[i].mesh->sendGroupMessage(
-                delayed_channel_responses[i].mesh->getRTCClock()->getCurrentTime(), const_cast<mesh::GroupChannel&>(delayed_channel_responses[i].channel), 
-                delayed_channel_responses[i].sender_name, delayed_channel_responses[i].response, strlen(delayed_channel_responses[i].response));
-            
-            delayed_channel_responses[i].is_active = false;
-            channel_response_count--;
-        }
-    }
-}
 
 #endif // PINGPONG_ENABLED

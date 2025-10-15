@@ -809,9 +809,9 @@ protected:
             if (PingPongHelper::extractPathInfo(pkt, hop_count, router_ids_buffer, sizeof(router_ids_buffer))) {
               if (PingPongHelper::generatePongResponse(sender_name, hop_count, router_ids_buffer, 
                                                        pkt->getSNR(), rssi, true, response, sizeof(response))) {
-                // Schedule delayed channel response (randomized 5-8s allows network storm to settle
+                // Schedule delayed channel response (randomized 1-3s allows network storm to settle
                 // and prevents multiple bots from responding simultaneously)
-                uint32_t delay = getRNG()->nextInt(5000, 8001);  // 5000-8000 ms
+                uint32_t delay = getRNG()->nextInt(1000, 3001);  // 1000-3000 ms
                 PingPongHelper::scheduleDelayedChannelResponse(*this, channel, response, delay, _prefs.node_name);
               }
             }
@@ -1609,9 +1609,6 @@ void setup() {
 void loop() {
   the_mesh.loop();
   
-#ifdef PINGPONG_ENABLED
-  PingPongHelper::processScheduledResponses();
-#endif
 
 #ifdef TIMESYNC_MONITOR_ENABLED
   TimeSyncMonitor::checkAndSendDailyReport(the_mesh, the_mesh.getRTCClock()->getCurrentTime(), the_mesh.getNodePrefs()->node_name);

@@ -18,13 +18,8 @@ public:
                                char* router_ids_buffer, size_t buffer_size);
     static bool processMessage(BaseChatMesh& mesh, const ContactInfo& from,
                              mesh::Packet* packet, uint32_t sender_timestamp, const char* text);
-    static bool hasRespondedToPacket(const uint8_t* packet_hash);
-    static void markPacketResponded(const uint8_t* packet_hash);
-    static void scheduleDelayedResponse(BaseChatMesh& mesh, const ContactInfo& from, 
-                                       const char* response, uint32_t delay_ms);
     static void scheduleDelayedChannelResponse(BaseChatMesh& mesh, const mesh::GroupChannel& channel, 
                                              const char* response, uint32_t delay_ms, const char* sender_name);
-    static void processScheduledResponses();
     static bool canRespondToChannelSender(const char* sender_name, uint32_t cooldown_ms);
 };
 
