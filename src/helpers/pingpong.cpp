@@ -175,19 +175,30 @@ bool PingPongHelper::processMessage(BaseChatMesh& mesh, const ContactInfo& from,
         return false;
     }
     
-    // Randomized delay 1-3 seconds to prevent simultaneous responses
-    uint32_t delay = mesh.getRNG()->nextInt(1000, 3001);
+    // Randomized delay 8-10 seconds to prevent simultaneous responses
+    uint32_t delay = mesh.getRNG()->nextInt(8000, 10001);
     
     Serial.printf("[PING] Queueing pong to %s with %dms delay (path_len=%d)\n", 
                   from.name, delay, from.out_path_len);
     
-    // Use MeshCore's built-in delayed send queue
-    if (from.out_path_len < 0) {
-        mesh.sendFlood(pong_pkt, delay);
-        Serial.println("[PING] Queued as FLOOD");
-    } else {
+    // Try direct path first (if available), then fallback to flood
+    if (from.out_path_len > 0) {
+        // Send via direct path first
         mesh.sendDirect(pong_pkt, from.out_path, from.out_path_len, delay);
-        Serial.println("[PING] Queued as DIRECT");
+        Serial.println("[PING] Queued as DIRECT (primary attempt)");
+        
+        // Create backup flood packet for retry
+        mesh::Packet* flood_pkt = mesh.createDatagram(PAYLOAD_TYPE_TXT_MSG, from.id, from.shared_secret, temp, 5 + text_len);
+        if (flood_pkt) {
+            // Schedule flood retry after delay + 5 seconds (in case direct fails)
+            uint32_t flood_delay = delay + 5000; // 5 seconds after direct attempt
+            mesh.sendFlood(flood_pkt, flood_delay);
+            Serial.printf("[PING] Queued flood backup with %dms delay\n", flood_delay);
+        }
+    } else {
+        // No direct path available, use flood
+        mesh.sendFlood(pong_pkt, delay);
+        Serial.println("[PING] Queued as FLOOD (no direct path)");
     }
     
     return true;
