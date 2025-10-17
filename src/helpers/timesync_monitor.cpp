@@ -453,89 +453,58 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
     if (current_hour == DAILY_REPORT_HOUR && current_minute == DAILY_REPORT_MINUTE) {
         last_report_day = current_day;
         
-        // Build shame list
-        char shame_list[1024];
-        int pos = snprintf(shame_list, sizeof(shame_list), "SHAME 🔔 SYNC YOUR TIME!");
-        
-        bool has_offenders = false;
-        for (int i = 0; i < MAX_TRACKED_REPEATERS; i++) {
-            if (repeater_states[i].is_active && repeater_states[i].on_shame_list) {
-                has_offenders = true;
+        // Build shame list using the same format as direct messages
+        char shame_message[512];
+        if (generateShameListMessage(shame_message, sizeof(shame_message))) {
+            // Check if message is too long and needs to be split
+            int text_len = strlen(shame_message);
+            if (text_len <= MAX_MESSAGE_LENGTH) {
+                // Message fits in one packet, send directly
+                sendShameListMessage(mesh, shame_message, node_name);
+            } else {
+                // Message is too long, split it into multiple messages
+                // Split by newlines to preserve the format
+                char* line_start = shame_message;
+                char current_msg[256];
+                int current_pos = 0;
                 
-                // Add name to list
-                if (pos < (int)sizeof(shame_list) - 2) {
-                    shame_list[pos++] = '\n';
-                }
+                // Always start with the header
+                strncpy(current_msg, "SHAME 🔔 SYNC YOUR TIME!", sizeof(current_msg) - 1);
+                current_pos = strlen(current_msg);
                 
-                int name_len = strlen(repeater_states[i].name);
-                if (pos + name_len < (int)sizeof(shame_list) - 1) {
-                    strcpy(&shame_list[pos], repeater_states[i].name);
-                    pos += name_len;
-                }
-            }
-        }
-        
-        if (has_offenders) {
-            shame_list[pos] = '\0';
-            
-            // Split into multiple messages if needed (max 150 chars each)
-            char current_msg[256];
-            int msg_start = 0;
-            int msg_pos = 0;
-            
-            // First message starts with "SHAME 🔔 SYNC YOUR TIME!"
-            strncpy(current_msg, "SHAME 🔔 SYNC YOUR TIME!", sizeof(current_msg) - 1);
-            msg_pos = strlen(current_msg);
-            
-            // Skip the header in shame_list
-            int list_pos = strlen("SHAME 🔔 SYNC YOUR TIME!");
-            
-            // Process each name
-            while (list_pos < pos) {
-                char c = shame_list[list_pos];
-                
-                if (c == '\n') {
-                    // Start of a new name, check if we need to start a new message
-                    list_pos++;
+                // Process each line
+                char* line_end = strchr(line_start, '\n');
+                while (line_end != NULL) {
+                    int line_len = line_end - line_start;
                     
-                    // Find next newline or end
-                    int next_newline = list_pos;
-                    while (next_newline < pos && shame_list[next_newline] != '\n') {
-                        next_newline++;
-                    }
-                    int name_len = next_newline - list_pos;
-                    
-                    // Check if adding this name would exceed limit
-                    if (msg_pos + 2 + name_len > MAX_MESSAGE_LENGTH) {
+                    // Check if adding this line would exceed the limit
+                    if (current_pos + 1 + line_len > MAX_MESSAGE_LENGTH) {
                         // Send current message and start new one
-                        current_msg[msg_pos] = '\0';
+                        current_msg[current_pos] = '\0';
                         sendShameListMessage(mesh, current_msg, node_name);
                         
-                        // Start new message (continuation doesn't need header)
-                        msg_pos = 0;
+                        // Start new message with just the header
+                        strncpy(current_msg, "SHAME 🔔 SYNC YOUR TIME!", sizeof(current_msg) - 1);
+                        current_pos = strlen(current_msg);
                     }
                     
-                    // Add comma separator if not first name in message
-                    if (msg_pos > 0 && msg_pos < (int)sizeof(current_msg) - 2) {
-                        current_msg[msg_pos++] = ',';
-                        current_msg[msg_pos++] = ' ';
+                    // Add newline and line content
+                    if (current_pos + 1 + line_len < (int)sizeof(current_msg) - 1) {
+                        current_msg[current_pos++] = '\n';
+                        memcpy(&current_msg[current_pos], line_start, line_len);
+                        current_pos += line_len;
                     }
                     
-                    // Add name
-                    if (msg_pos + name_len < (int)sizeof(current_msg) - 1) {
-                        memcpy(&current_msg[msg_pos], &shame_list[list_pos], name_len);
-                        msg_pos += name_len;
-                        list_pos += name_len;
-                    }
-                } else {
-                    list_pos++;
+                    // Move to next line
+                    line_start = line_end + 1;
+                    line_end = strchr(line_start, '\n');
                 }
-            }
-            
-            // Send final message
-            if (msg_pos > 0) {
-                current_msg[msg_pos] = '\0';
-                sendShameListMessage(mesh, current_msg, node_name);
+                
+                // Send final message if there's content
+                if (current_pos > strlen("SHAME 🔔 SYNC YOUR TIME!")) {
+                    current_msg[current_pos] = '\0';
+                    sendShameListMessage(mesh, current_msg, node_name);
+                }
             }
         }
     }
