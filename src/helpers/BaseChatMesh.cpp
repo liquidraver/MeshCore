@@ -397,6 +397,28 @@ bool BaseChatMesh::sendGroupMessage(uint32_t timestamp, mesh::GroupChannel& chan
   return false;
 }
 
+bool BaseChatMesh::sendChannelMessage(const mesh::GroupChannel& channel, const char* message, const char* sender_name, uint32_t delay_ms) {
+  // Default implementation - just send without retry system
+  // This can be overridden in derived classes to add retry functionality
+  uint8_t temp[5+MAX_TEXT_LEN+32];
+  uint32_t timestamp = getRTCClock()->getCurrentTime();
+  memcpy(temp, &timestamp, 4);
+  temp[4] = 0;  // TXT_TYPE_PLAIN
+
+  // Format: <sender_name>: <message>
+  sprintf((char *) &temp[5], "%s: %s", sender_name, message);
+  temp[5 + MAX_TEXT_LEN] = 0;  // truncate if too long
+
+  int len = strlen((char *) &temp[5]);
+  auto pkt = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, temp, 5 + len);
+  if (!pkt) {
+    return false;
+  }
+  
+  sendFlood(pkt, delay_ms);
+  return true;
+}
+
 bool BaseChatMesh::shareContactZeroHop(const ContactInfo& contact) {
   int plen = getBlobByKey(contact.id.pub_key, PUB_KEY_SIZE, temp_buf);  // retrieve last raw advert packet
   if (plen == 0) return false;  // not found

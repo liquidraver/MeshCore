@@ -170,6 +170,18 @@ struct LogPrefs {
   uint8_t dofwd;
 };
 
+// Retry system for channel messages
+struct PendingRetry {
+  mesh::Packet* packet;
+  unsigned long retry_time;
+  uint8_t retry_count;
+  bool is_active;
+};
+
+static const int MAX_PENDING_RETRIES = 8;
+PendingRetry pending_retries[MAX_PENDING_RETRIES];
+
+
 #define MAX_ADMINS 8
 struct AdminPrefs {
   uint16_t version;
@@ -196,6 +208,82 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
 
   // debug toggle flag
   bool m_debugPrint = false;
+  
+  // Retry system helper functions for channel messages
+  void scheduleRetry(mesh::Packet* packet, uint32_t delay_ms) {
+    for (int i = 0; i < MAX_PENDING_RETRIES; i++) {
+      if (!pending_retries[i].is_active) {
+        pending_retries[i].packet = packet;
+        pending_retries[i].retry_time = millis() + delay_ms;
+        pending_retries[i].retry_count = 1;
+        pending_retries[i].is_active = true;
+        
+        MESH_DEBUG_PRINTLN("[RETRY] Scheduled retry #%d in %dms", 1, delay_ms);
+        return;
+      }
+    }
+    MESH_DEBUG_PRINTLN("[RETRY] ERROR: No free retry slots available");
+    releasePacket(packet);  // Release packet if we can't schedule retry
+  }
+  
+  void processRetries() {
+    for (int i = 0; i < MAX_PENDING_RETRIES; i++) {
+      if (pending_retries[i].is_active && millis() >= pending_retries[i].retry_time) {
+        mesh::Packet* packet = pending_retries[i].packet;
+        uint8_t retry_count = pending_retries[i].retry_count;
+        
+        // Check if we heard repetition of this packet
+        if (_tables->wasPacketHeard(packet)) {
+          MESH_DEBUG_PRINTLN("[RETRY] Packet was heard, canceling retry #%d", retry_count);
+          pending_retries[i].is_active = false;
+          releasePacket(packet);
+        } else {
+          // Retry the packet
+          MESH_DEBUG_PRINTLN("[RETRY] Retrying packet #%d (not heard)", retry_count);
+          sendFlood(packet, 0);  // Send immediately
+          // Note: Don't track retries - they're already tracked from original send
+          
+          if (retry_count < 2) {  // Allow one more retry
+            pending_retries[i].retry_count++;
+            pending_retries[i].retry_time = millis() + getRNG()->nextInt(2000, 4001);  // 2-4 seconds
+          } else {
+            MESH_DEBUG_PRINTLN("[RETRY] Max retries reached, giving up");
+            pending_retries[i].is_active = false;
+            releasePacket(packet);
+          }
+        }
+      }
+    }
+  }
+  
+  // Override BaseChatMesh::sendChannelMessage to use retry system
+  bool sendChannelMessage(const mesh::GroupChannel& channel, const char* message, const char* sender_name, uint32_t delay_ms = 0) override {
+    uint8_t temp[5+MAX_TEXT_LEN+32];
+    uint32_t timestamp = getRTCClock()->getCurrentTime();
+    memcpy(temp, &timestamp, 4);
+    temp[4] = 0;  // TXT_TYPE_PLAIN
+
+    // Format: <sender_name>: <message>
+    sprintf((char *) &temp[5], "%s: %s", sender_name, message);
+    temp[5 + MAX_TEXT_LEN] = 0;  // truncate if too long
+
+    int len = strlen((char *) &temp[5]);
+    auto pkt = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, temp, 5 + len);
+    if (!pkt) {
+      MESH_DEBUG_PRINTLN("[CHANNEL-RETRY] ERROR: Failed to create group datagram (packet pool full?)");
+      return false;
+    }
+    
+    MESH_DEBUG_PRINTLN("[CHANNEL-RETRY] Sending channel message with %dms delay", delay_ms);
+    
+    // Send with retry system
+    sendFlood(pkt, delay_ms);
+    
+    // Track packet AFTER sending (not before) to avoid false repetition detection
+    _tables->trackSentPacket(pkt);
+    scheduleRetry(pkt, delay_ms + getRNG()->nextInt(2000, 4001));  // Schedule retry check
+    return true;
+  }
 
   const char* getTypeName(uint8_t type) const {
     if (type == ADV_TYPE_CHAT) return "Chat";
@@ -749,6 +837,9 @@ protected:
   }
 
   void onChannelMessageRecv(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t timestamp, const char *text) override {
+    // Add debug logging
+    MESH_DEBUG_PRINTLN("[CHANNEL] Received: %s", text);
+    
     uint8_t hash[MAX_HASH_SIZE];
     pkt->calculatePacketHash(hash);
 
@@ -776,12 +867,12 @@ protected:
     messageQueue.push(doc);
 
     if (pkt->isRouteDirect()) {
-      Serial.printf("PUBLIC CHANNEL MSG -> (Direct!)\n");
+      MESH_DEBUG_PRINTLN("PUBLIC CHANNEL MSG -> (Direct!)");
     } else {
-      Serial.printf("PUBLIC CHANNEL MSG -> (Flood) hops %d\n", pkt->path_len);
+      MESH_DEBUG_PRINTLN("PUBLIC CHANNEL MSG -> (Flood) hops %d", pkt->path_len);
     }
 
-    Serial.printf("   %s\n", text);
+    MESH_DEBUG_PRINTLN("   %s", text);
 
         // Check for ping message in channel and send pong response (only #ping channel)
 #ifdef PINGPONG_ENABLED
@@ -803,10 +894,14 @@ protected:
             }
           }
           
+          MESH_DEBUG_PRINTLN("[PING-CH] Processing ping from: %s", sender_name);
+          
           // Per-sender 15-second cooldown (allows multiple people to ping simultaneously)
           bool canRespond = PingPongHelper::canRespondToChannelSender(sender_name, 15000);
           
           if (canRespond) {
+            MESH_DEBUG_PRINTLN("[PING-CH] Can respond to %s (not in cooldown)", sender_name);
+            
             // Get RSSI from radio
             float rssi = 0.0;
             if (getRadio()) {
@@ -822,12 +917,42 @@ protected:
             if (PingPongHelper::extractPathInfo(pkt, hop_count, router_ids_buffer, sizeof(router_ids_buffer))) {
               if (PingPongHelper::generatePongResponse(sender_name, hop_count, router_ids_buffer, 
                                                        pkt->getSNR(), rssi, true, response, sizeof(response))) {
-                // Schedule delayed channel response (randomized 8-10s allows network storm to settle
+                // Create channel message packet for retry system
+                uint8_t temp[5+MAX_TEXT_LEN+32];
+                uint32_t timestamp = getRTCClock()->getCurrentTime();
+                memcpy(temp, &timestamp, 4);
+                temp[4] = 0;  // TXT_TYPE_PLAIN
+
+                // Format: <sender_name>: <response>
+                sprintf((char *) &temp[5], "%s: %s", _prefs.node_name, response);
+                temp[5 + MAX_TEXT_LEN] = 0;  // truncate if too long
+
+                int len = strlen((char *) &temp[5]);
+                auto pkt = createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, channel, temp, 5 + len);
+                if (!pkt) {
+                  MESH_DEBUG_PRINTLN("[PING-CH] ERROR: Failed to create group datagram (packet pool full?)");
+                  return;
+                }
+                
+                // Schedule delayed channel response (randomized 6-8s allows network storm to settle
                 // and prevents multiple bots from responding simultaneously)
-                uint32_t delay = getRNG()->nextInt(8000, 10001);  // 8000-10000 ms
-                PingPongHelper::scheduleDelayedChannelResponse(*this, channel, response, delay, _prefs.node_name);
+                uint32_t delay = getRNG()->nextInt(6000, 8001);  // 6000-8000 ms
+                MESH_DEBUG_PRINTLN("[PING-CH] Scheduling response to %s with %dms delay", sender_name, delay);
+                
+                // Send with retry system
+                sendFlood(pkt, delay);
+                
+                // Track packet AFTER sending (not before) to avoid false repetition detection
+                _tables->trackSentPacket(pkt);
+                scheduleRetry(pkt, delay + getRNG()->nextInt(2000, 4001));  // Schedule retry check
+              } else {
+                MESH_DEBUG_PRINTLN("[PING-CH] ERROR: Failed to generate pong response");
               }
+            } else {
+              MESH_DEBUG_PRINTLN("[PING-CH] ERROR: Failed to extract path info");
             }
+          } else {
+            MESH_DEBUG_PRINTLN("[PING-CH] Cannot respond to %s (in cooldown)", sender_name);
           }
         }
 #endif
@@ -856,7 +981,7 @@ protected:
 
 public:
   MyMesh(mesh::Radio& radio, StdRNG& rng, mesh::RTCClock& rtc, LoggerMeshTables& tables)
-     : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(16), tables)
+     : BaseChatMesh(radio, *new ArduinoMillis(), rng, rtc, *new StaticPoolPacketManager(32), tables)
   {
     // defaults
     memset(&_prefs, 0, sizeof(_prefs));
@@ -873,6 +998,9 @@ public:
     command[0] = 0;
     curr_recipient = NULL;
     _tables = &tables;
+    
+    // Initialize retry system
+    memset(pending_retries, 0, sizeof(pending_retries));
   }
 
   float getFreqPref() const { return _prefs.freq; }
@@ -1377,6 +1505,9 @@ public:
 
   void loop() {
     BaseChatMesh::loop();
+    
+    // Process retry system for channel messages
+    processRetries();
 
     int len = strlen(command);
     while (Serial.available() && len < sizeof(command)-1) {
@@ -1628,6 +1759,7 @@ void setup() {
 void loop() {
   static unsigned long last_loop_time = 0;
   static unsigned long max_loop_time = 0;
+  static unsigned long last_pool_check = 0;
   unsigned long loop_start = millis();
   
   unsigned long mesh_start = millis();
@@ -1641,6 +1773,12 @@ void loop() {
   TimeSyncMonitor::processPendingSavesAsync();  // Use non-blocking version
 #endif
   unsigned long timesync_time = millis() - timesync_start;
+
+  // Monitor packet pool status every 30 seconds
+  if (millis() - last_pool_check > 30000) {
+    MESH_DEBUG_PRINTLN("[DEBUG] Queue: %u msgs", messageQueue.size());
+    last_pool_check = millis();
+  }
 
   // Monitor loop timing to detect blocking issues
   unsigned long loop_time = millis() - loop_start;
@@ -1660,7 +1798,7 @@ void loop() {
   // Reset max every 10 seconds
   if (millis() - last_loop_time > 10000) {
     if (max_loop_time > 20) {
-      Serial.printf("Loop timing: max %lums in last 10s\n", max_loop_time);
+      MESH_DEBUG_PRINTLN("Loop timing: max %lums in last 10s", max_loop_time);
     }
     max_loop_time = 0;
     last_loop_time = millis();

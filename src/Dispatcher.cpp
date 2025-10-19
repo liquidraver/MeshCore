@@ -193,7 +193,7 @@ void Dispatcher::checkRecv() {
 
       int _delay = calcRxDelay(score, air_time);
       if (_delay < 50) {
-        MESH_DEBUG_PRINTLN("%s Dispatcher::checkRecv(), score delay below threshold (%d)", getLogDateTime(), _delay);
+        // MESH_DEBUG_PRINTLN("%s Dispatcher::checkRecv(), score delay below threshold (%d)", getLogDateTime(), _delay);  // Removed - floods debug output
         processRecvPacket(pkt);   // is below the score delay threshold, so process immediately
       } else {
         MESH_DEBUG_PRINTLN("%s Dispatcher::checkRecv(), score delay is: %d millis", getLogDateTime(), _delay);

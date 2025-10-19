@@ -1,6 +1,10 @@
 #include "timesync_monitor.h"
 #include <string.h>
 
+// Forward declarations for enhanced mesh implementations
+class LoggerMeshTables;  // Used in simple_web_logger
+class MyMesh;            // Used in simple_web_logger
+
 #ifdef TIMESYNC_MONITOR_ENABLED
 
 #if defined(ESP32) || defined(RP2040_PLATFORM)
@@ -308,7 +312,19 @@ void TimeSyncMonitor::sendShameListMessage(BaseChatMesh& mesh, const char* messa
         return;
     }
     
-    // Use MeshCore's built-in delayed send system for channel messages (like PingPongHelper)
+    // Use staggered delays to prevent simultaneous messages
+    static uint8_t message_counter = 0;
+    uint32_t delay = MESSAGE_DELAY_MS + (message_counter * 1000); // Stagger by 1 second each
+    message_counter = (message_counter + 1) % 10; // Reset after 10 messages
+    
+    // Try to use enhanced channel message sending if available
+    // This will be overridden in MyMesh to use retry system
+    if (mesh.sendChannelMessage(*public_channel, message, node_name, delay)) {
+        MESH_DEBUG_PRINTLN("[TIMESYNC-CH] Using enhanced channel message sending");
+        return;
+    }
+    
+    // Fallback to regular channel message sending
     uint8_t temp[5+MAX_TEXT_LEN+32];
     uint32_t timestamp = mesh.getRTCClock()->getCurrentTime();
     memcpy(temp, &timestamp, 4);
@@ -321,14 +337,11 @@ void TimeSyncMonitor::sendShameListMessage(BaseChatMesh& mesh, const char* messa
     int len = strlen((char *) &temp[5]);
     auto pkt = mesh.createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, *public_channel, temp, 5 + len);
     if (!pkt) {
-        return; // Packet pool full
+        MESH_DEBUG_PRINTLN("[TIMESYNC-CH] ERROR: Failed to create group datagram (packet pool full?)");
+        return;
     }
     
-    // Use MeshCore's built-in delayed send with staggered delays to prevent simultaneous messages
-    static uint8_t message_counter = 0;
-    uint32_t delay = MESSAGE_DELAY_MS + (message_counter * 1000); // Stagger by 1 second each
-    message_counter = (message_counter + 1) % 10; // Reset after 10 messages
-    
+    MESH_DEBUG_PRINTLN("[TIMESYNC-CH] Using regular channel message sending");
     mesh.sendFlood(pkt, delay);
 }
 
