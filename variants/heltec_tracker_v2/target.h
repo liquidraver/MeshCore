@@ -3,17 +3,17 @@
 #define RADIOLIB_STATIC_ONLY 1
 #include <RadioLib.h>
 #include <helpers/radiolib/RadioLibWrappers.h>
-#include <StationG2Board.h>
+#include <HeltecTrackerV2Board.h>
 #include <helpers/radiolib/CustomSX1262Wrapper.h>
 #include <helpers/AutoDiscoverRTCClock.h>
+#include <helpers/SensorManager.h>
 #include <helpers/sensors/EnvironmentSensorManager.h>
-
 #ifdef DISPLAY_CLASS
-  #include <helpers/ui/SH1106Display.h>
+  #include <helpers/ui/ST7735Display.h>
   #include <helpers/ui/MomentaryButton.h>
 #endif
 
-extern StationG2Board board;
+extern HeltecTrackerV2Board board;
 extern WRAPPER_CLASS radio_driver;
 extern AutoDiscoverRTCClock rtc_clock;
 extern EnvironmentSensorManager sensors;

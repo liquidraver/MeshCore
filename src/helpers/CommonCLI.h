@@ -2,10 +2,15 @@
 
 #include "Mesh.h"
 #include <helpers/IdentityStore.h>
+#include <helpers/SensorManager.h>
 
 #if defined(WITH_RS232_BRIDGE) || defined(WITH_ESPNOW_BRIDGE)
 #define WITH_BRIDGE
 #endif
+
+#define ADVERT_LOC_NONE       0
+#define ADVERT_LOC_SHARE      1
+#define ADVERT_LOC_PREFS      2
 
 struct NodePrefs { // persisted to file
   float airtime_factor;
@@ -37,6 +42,10 @@ struct NodePrefs { // persisted to file
   uint32_t bridge_baud;   // 9600, 19200, 38400, 57600, 115200 (default 115200)
   uint8_t bridge_channel; // 1-14 (ESP-NOW only)
   char bridge_secret[16]; // for XOR encryption of bridge packets (ESP-NOW only)
+  // Gps settings
+  uint8_t gps_enabled;
+  uint32_t gps_interval; // in seconds
+  uint8_t advert_loc_policy;
 };
 
 class CommonCLICallbacks {
@@ -76,6 +85,7 @@ class CommonCLI {
   NodePrefs* _prefs;
   CommonCLICallbacks* _callbacks;
   mesh::MainBoard* _board;
+  SensorManager* _sensors;
   char tmp[PRV_KEY_SIZE*2 + 4];
 
   mesh::RTCClock* getRTCClock() { return _rtc; }
@@ -83,10 +93,11 @@ class CommonCLI {
   void loadPrefsInt(FILESYSTEM* _fs, const char* filename);
 
 public:
-  CommonCLI(mesh::MainBoard& board, mesh::RTCClock& rtc, NodePrefs* prefs, CommonCLICallbacks* callbacks)
-      : _board(&board), _rtc(&rtc), _prefs(prefs), _callbacks(callbacks) { }
+  CommonCLI(mesh::MainBoard& board, mesh::RTCClock& rtc, SensorManager& sensors, NodePrefs* prefs, CommonCLICallbacks* callbacks)
+      : _board(&board), _rtc(&rtc), _sensors(&sensors), _prefs(prefs), _callbacks(callbacks) { }
 
   void loadPrefs(FILESYSTEM* _fs);
   void savePrefs(FILESYSTEM* _fs);
   void handleCommand(uint32_t sender_timestamp, const char* command, char* reply);
+  uint8_t buildAdvertData(uint8_t node_type, uint8_t* app_data);
 };
