@@ -134,6 +134,13 @@ bool PingPongHelper::processMessage(BaseChatMesh& mesh, const ContactInfo& from,
 
     Serial.printf("[PING] Detected ping from %s\n", from.name);
     
+    // Per-sender 15-second cooldown (prevents spam responses)
+    bool canRespond = canRespondToChannelSender(from.name, 15000);
+    if (!canRespond) {
+        Serial.printf("[PING] Skipping response to %s (still in cooldown)\n", from.name);
+        return false;
+    }
+    
     uint8_t hop_count = packet->path_len;
     char router_ids_buffer[256];
     
@@ -155,50 +162,25 @@ bool PingPongHelper::processMessage(BaseChatMesh& mesh, const ContactInfo& from,
     
     Serial.printf("[PING] Generated response: %s\n", response);
     
-    // Create pong message packet manually (composeMsgPacket is private)
-    int text_len = strlen(response);
-    if (text_len > MAX_TEXT_LEN) {
-        Serial.printf("[PING] ERROR: Response too long (%d > %d)\n", text_len, MAX_TEXT_LEN);
-        return false;
-    }
-    
-    uint8_t temp[5+MAX_TEXT_LEN+1];
-    uint32_t timestamp = mesh.getRTCClock()->getCurrentTime();
-    memcpy(temp, &timestamp, 4);
-    temp[4] = 0;  // attempt = 0
-    memcpy(&temp[5], response, text_len + 1);
-    
-    mesh::Packet* pong_pkt = mesh.createDatagram(PAYLOAD_TYPE_TXT_MSG, from.id, from.shared_secret, temp, 5 + text_len);
-    
-    if (!pong_pkt) {
-        Serial.println("[PING] ERROR: Failed to create datagram (packet pool full?)");
-        return false;
-    }
+    // Use the existing sendMessage() method which handles ACK timeout and retry automatically
+    uint32_t est_timeout;
+    uint32_t expected_ack;
     
     // Randomized delay 8-10 seconds to prevent simultaneous responses
     uint32_t delay = mesh.getRNG()->nextInt(8000, 10001);
     
-    Serial.printf("[PING] Queueing pong to %s with %dms delay (path_len=%d)\n", 
+    Serial.printf("[PING] Sending pong to %s with %dms delay (path_len=%d)\n", 
                   from.name, delay, from.out_path_len);
     
-    // Try direct path first (if available), then fallback to flood
-    if (from.out_path_len > 0) {
-        // Send via direct path first
-        mesh.sendDirect(pong_pkt, from.out_path, from.out_path_len, delay);
-        Serial.println("[PING] Queued as DIRECT (primary attempt)");
-        
-        // Create backup flood packet for retry
-        mesh::Packet* flood_pkt = mesh.createDatagram(PAYLOAD_TYPE_TXT_MSG, from.id, from.shared_secret, temp, 5 + text_len);
-        if (flood_pkt) {
-            // Schedule flood retry after delay + 5 seconds (in case direct fails)
-            uint32_t flood_delay = delay + 5000; // 5 seconds after direct attempt
-            mesh.sendFlood(flood_pkt, flood_delay);
-            Serial.printf("[PING] Queued flood backup with %dms delay\n", flood_delay);
-        }
+    // Use sendMessage with attempt=0 (it will retry automatically on ACK timeout)
+    int result = mesh.sendMessage(from, mesh.getRTCClock()->getCurrentTime(), 0, response, expected_ack, est_timeout);
+    
+    if (result == MSG_SEND_FAILED) {
+        Serial.println("[PING] ERROR: Failed to send pong message");
+        return false;
     } else {
-        // No direct path available, use flood
-        mesh.sendFlood(pong_pkt, delay);
-        Serial.println("[PING] Queued as FLOOD (no direct path)");
+        Serial.printf("[PING] Pong queued - %s (timeout: %ums)\n", 
+                      result == MSG_SEND_SENT_FLOOD ? "FLOOD" : "DIRECT", est_timeout);
     }
     
     return true;
