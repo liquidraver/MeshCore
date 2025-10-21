@@ -22,4 +22,5 @@ public:
     virtual void stop() { _time_sync_needed = false; }
     virtual void loop() = 0;
     virtual bool isEnabled() = 0;
+    virtual void setAutosyncEnabled(bool enabled) { }
 };
