@@ -24,30 +24,49 @@ bool PingPongHelper::isPingMessage(const char* text) {
     if (!text) return false;
     
     size_t len = strlen(text);
+    if (len == 0) return false;
+    
+    // Create lowercase copy
     char* lower_text = new char[len + 1];
     for (size_t i = 0; i < len; i++) {
         lower_text[i] = tolower(text[i]);
     }
     lower_text[len] = '\0';
     
-    if (strcmp(lower_text, "ping") == 0) {
-        delete[] lower_text;
-        return true;
-    }
+    // Check for direct match (with whitespace trimming)
+    const char* start = lower_text;
+    const char* end = lower_text + len;
     
-    const char* colon_pos = strchr(lower_text, ':');
-    if (colon_pos) {
-        const char* after_colon = colon_pos + 1;
-        while (*after_colon == ' ') after_colon++;
-        
-        if (strcmp(after_colon, "ping") == 0) {
-            delete[] lower_text;
-            return true;
+    // Trim leading whitespace
+    while (start < end && isspace(*start)) start++;
+    // Trim trailing whitespace
+    while (end > start && isspace(*(end - 1))) end--;
+    
+    size_t trimmed_len = end - start;
+    
+    // Check if trimmed text is exactly "ping"
+    bool is_ping = (trimmed_len == 4 && memcmp(start, "ping", 4) == 0);
+    
+    // Also check for channel messages: "sender: ping"
+    if (!is_ping) {
+        const char* colon_pos = strchr(lower_text, ':');
+        if (colon_pos) {
+            const char* after_colon = colon_pos + 1;
+            while (after_colon < lower_text + len && isspace(*after_colon)) after_colon++;
+            
+            // Trim trailing whitespace after colon
+            const char* end_msg = lower_text + len;
+            while (end_msg > after_colon && isspace(*(end_msg - 1))) end_msg--;
+            
+            size_t msg_len = end_msg - after_colon;
+            if (msg_len == 4 && memcmp(after_colon, "ping", 4) == 0) {
+                is_ping = true;
+            }
         }
     }
     
     delete[] lower_text;
-    return false;
+    return is_ping;
 }
 
 bool PingPongHelper::generatePongResponse(const char* sender_name, uint8_t hop_count, 
