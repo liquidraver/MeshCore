@@ -30,6 +30,7 @@
 #include <helpers/IdentityStore.h>
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/StaticPoolPacketManager.h>
+#include <helpers/StatsFormatHelper.h>
 #include <helpers/TxtDataHelpers.h>
 
 #ifdef WITH_BRIDGE
@@ -78,6 +79,8 @@ struct NeighbourInfo {
 
 class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   FILESYSTEM* _fs;
+  uint32_t last_millis;
+  uint64_t uptime_millis;
   unsigned long next_local_advert, next_flood_advert;
   bool _logging;
   NodePrefs _prefs;
@@ -181,6 +184,9 @@ public:
   void setTxPower(uint8_t power_dbm) override;
   void formatNeighborsReply(char *reply) override;
   void removeNeighbor(const uint8_t* pubkey, int key_len) override;
+  void formatStatsReply(char *reply) override;
+  void formatRadioStatsReply(char *reply) override;
+  void formatPacketStatsReply(char *reply) override;
 
   mesh::LocalIdentity& getSelfId() override { return self_id; }
 

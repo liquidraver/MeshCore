@@ -144,7 +144,7 @@ int MyMesh::handleRequest(ClientInfo *sender, uint32_t sender_timestamp, uint8_t
     stats.n_packets_recv = radio_driver.getPacketsRecv();
     stats.n_packets_sent = radio_driver.getPacketsSent();
     stats.total_air_time_secs = getTotalAirTime() / 1000;
-    stats.total_up_time_secs = _ms->getMillis() / 1000;
+    stats.total_up_time_secs = uptime_millis / 1000;
     stats.n_sent_flood = getNumSentFlood();
     stats.n_sent_direct = getNumSentDirect();
     stats.n_recv_flood = getNumRecvFlood();
@@ -262,11 +262,11 @@ const char *MyMesh::getLogDateTime() {
 
 uint32_t MyMesh::getRetransmitDelay(const mesh::Packet *packet) {
   uint32_t t = (_radio->getEstAirtimeFor(packet->path_len + packet->payload_len + 2) * _prefs.tx_delay_factor);
-  return getRNG()->nextInt(0, 6) * t;
+  return getRNG()->nextInt(0, 5*t);
 }
 uint32_t MyMesh::getDirectRetransmitDelay(const mesh::Packet *packet) {
   uint32_t t = (_radio->getEstAirtimeFor(packet->path_len + packet->payload_len + 2) * _prefs.direct_tx_delay_factor);
-  return getRNG()->nextInt(0, 6) * t;
+  return getRNG()->nextInt(0, 5*t);
 }
 
 bool MyMesh::allowPacketForward(const mesh::Packet *packet) {
@@ -581,6 +581,8 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
                mesh::RTCClock &rtc, mesh::MeshTables &tables)
     : mesh::Mesh(radio, ms, rng, rtc, *new StaticPoolPacketManager(32), tables),
       _cli(board, rtc, sensors, &_prefs, this), telemetry(MAX_PACKET_PAYLOAD - 4) {
+  last_millis = 0;
+  uptime_millis = 0;
   next_local_advert = next_flood_advert = 0;
   dirty_contacts_expiry = 0;
   _logging = false;
@@ -727,6 +729,19 @@ void MyMesh::clearStats() {
   ((SimpleMeshTables *)getTables())->resetStats();
 }
 
+void MyMesh::formatStatsReply(char *reply) {
+  StatsFormatHelper::formatCoreStats(reply, board, *_ms, _err_flags, _mgr);
+}
+
+void MyMesh::formatRadioStatsReply(char *reply) {
+  StatsFormatHelper::formatRadioStats(reply, _radio, radio_driver, getTotalAirTime(), getReceiveAirTime());
+}
+
+void MyMesh::formatPacketStatsReply(char *reply) {
+  StatsFormatHelper::formatPacketStats(reply, radio_driver, getNumSentFlood(), getNumSentDirect(), 
+                                       getNumRecvFlood(), getNumRecvDirect());
+}
+
 void MyMesh::handleCommand(uint32_t sender_timestamp, char *command, char *reply) {
   while (*command == ' ')
     command++; // skip leading spaces
@@ -858,4 +873,9 @@ void MyMesh::loop() {
   }
 
   // TODO: periodically check for OLD/inactive entries in known_clients[], and evict
+
+  // update uptime
+  uint32_t now = millis();
+  uptime_millis += now - last_millis;
+  last_millis = now;
 }

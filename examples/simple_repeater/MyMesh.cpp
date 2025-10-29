@@ -149,7 +149,7 @@ int MyMesh::handleRequest(ClientInfo *sender, uint32_t sender_timestamp, uint8_t
     stats.n_packets_recv = radio_driver.getPacketsRecv();
     stats.n_packets_sent = radio_driver.getPacketsSent();
     stats.total_air_time_secs = getTotalAirTime() / 1000;
-    stats.total_up_time_secs = _ms->getMillis() / 1000;
+    stats.total_up_time_secs = uptime_millis / 1000;
     stats.n_sent_flood = getNumSentFlood();
     stats.n_sent_direct = getNumSentDirect();
     stats.n_recv_flood = getNumRecvFlood();
@@ -397,11 +397,11 @@ int MyMesh::calcRxDelay(float score, uint32_t air_time) const {
 
 uint32_t MyMesh::getRetransmitDelay(const mesh::Packet *packet) {
   uint32_t t = (_radio->getEstAirtimeFor(packet->path_len + packet->payload_len + 2) * _prefs.tx_delay_factor);
-  return getRNG()->nextInt(0, 6) * t;
+  return getRNG()->nextInt(0, 5*t);
 }
 uint32_t MyMesh::getDirectRetransmitDelay(const mesh::Packet *packet) {
   uint32_t t = (_radio->getEstAirtimeFor(packet->path_len + packet->payload_len + 2) * _prefs.direct_tx_delay_factor);
-  return getRNG()->nextInt(0, 6) * t;
+  return getRNG()->nextInt(0, 5*t);
 }
 
 void MyMesh::onAnonDataRecv(mesh::Packet *packet, const uint8_t *secret, const mesh::Identity &sender,
@@ -594,6 +594,8 @@ MyMesh::MyMesh(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondCloc
       , bridge(&_prefs, _mgr, &rtc)
 #endif
 {
+  last_millis = 0;
+  uptime_millis = 0;
   next_local_advert = next_flood_advert = 0;
   dirty_contacts_expiry = 0;
   set_radio_at = revert_radio_at = 0;
@@ -785,6 +787,19 @@ void MyMesh::removeNeighbor(const uint8_t *pubkey, int key_len) {
 #endif
 }
 
+void MyMesh::formatStatsReply(char *reply) {
+  StatsFormatHelper::formatCoreStats(reply, board, *_ms, _err_flags, _mgr);
+}
+
+void MyMesh::formatRadioStatsReply(char *reply) {
+  StatsFormatHelper::formatRadioStats(reply, _radio, radio_driver, getTotalAirTime(), getReceiveAirTime());
+}
+
+void MyMesh::formatPacketStatsReply(char *reply) {
+  StatsFormatHelper::formatPacketStats(reply, radio_driver, getNumSentFlood(), getNumSentDirect(), 
+                                       getNumRecvFlood(), getNumRecvDirect());
+}
+
 void MyMesh::saveIdentity(const mesh::LocalIdentity &new_id) {
   self_id = new_id;
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -891,4 +906,9 @@ void MyMesh::loop() {
     acl.save(_fs);
     dirty_contacts_expiry = 0;
   }
+
+  // update uptime
+  uint32_t now = millis();
+  uptime_millis += now - last_millis;
+  last_millis = now;
 }
