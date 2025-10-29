@@ -18,7 +18,7 @@ public:
     static void processPendingSaves();
     static void processPendingSavesAsync();  // Non-blocking version
     static void setPublicChannel(const mesh::GroupChannel* channel);
-    static bool generateShameListMessage(char* output_buffer, size_t buffer_size);
+    static bool generateShameListMessage(char* output_buffer, size_t buffer_size, uint32_t current_time, bool allow_empty = false);
     static bool processShameListCommand(BaseChatMesh& mesh, const ContactInfo& from,
                                        mesh::Packet* packet, uint32_t sender_timestamp, const char* text);
     static void saveGoodTimeList();

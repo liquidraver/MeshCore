@@ -199,7 +199,6 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
   uint32_t expected_ack_crc;
   ChannelDetails* _public;
   ChannelDetails* _ping_channel;
-  ChannelDetails* _hungary;
   unsigned long last_msg_sent;
   ContactInfo* curr_recipient;
   char command[512+10];
@@ -329,6 +328,93 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
     if (_fs->exists("/channels2")) {
       _fs->remove("/channels2");
     }
+  }
+
+  // Helper function to convert hex PSK to base64
+  bool hexPskToBase64(const char* hex_psk, char* base64_out, size_t base64_size) {
+    uint8_t psk_bytes[32]; // Max 32 bytes (256-bit key)
+    size_t hex_len = strlen(hex_psk);
+    int psk_len = 0;
+    
+    if (hex_len == 32) {
+      // 32 hex chars = 16 bytes (128-bit key)
+      if (!mesh::Utils::fromHex(psk_bytes, 16, hex_psk)) return false;
+      psk_len = 16;
+    } else if (hex_len == 64) {
+      // 64 hex chars = 32 bytes (256-bit key)
+      if (!mesh::Utils::fromHex(psk_bytes, 32, hex_psk)) return false;
+      psk_len = 32;
+    } else {
+      return false;
+    }
+    
+    // Encode to base64 (process in groups of 3 bytes)
+    const char base64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int j = 0;
+    int i = 0;
+    
+    while (i < psk_len) {
+      uint32_t triple = psk_bytes[i++] << 16;
+      int bytes_in_group = 1;
+      
+      if (i < psk_len) {
+        triple |= psk_bytes[i++] << 8;
+        bytes_in_group++;
+      }
+      if (i < psk_len) {
+        triple |= psk_bytes[i++];
+        bytes_in_group++;
+      }
+      
+      base64_out[j++] = base64_chars[(triple >> 18) & 63];
+      base64_out[j++] = base64_chars[(triple >> 12) & 63];
+      
+      if (bytes_in_group >= 2) {
+        base64_out[j++] = base64_chars[(triple >> 6) & 63];
+      } else {
+        base64_out[j++] = '=';
+      }
+      
+      if (bytes_in_group >= 3) {
+        base64_out[j++] = base64_chars[triple & 63];
+      } else {
+        base64_out[j++] = '=';
+      }
+    }
+    base64_out[j] = '\0';
+    return true;
+  }
+
+  // Remove channel by index (removes from array and shifts remaining channels)
+  bool removeChannelByIdx(int idx) {
+#ifdef MAX_GROUP_CHANNELS
+    if (idx < 0 || idx >= MAX_GROUP_CHANNELS) return false;
+    
+    ChannelDetails ch;
+    if (!getChannel(idx, ch)) return false;  // Channel doesn't exist at this index
+    
+    // Find how many channels exist
+    int max_idx = idx;
+    ChannelDetails temp;
+    while (getChannel(max_idx + 1, temp)) {
+      max_idx++;
+    }
+    
+    // Shift all channels after idx one position forward using getChannel/setChannel
+    for (int i = idx; i < max_idx; i++) {
+      if (getChannel(i + 1, temp)) {
+        setChannel(i, temp);
+      }
+    }
+    
+    // Clear the last slot by setting an empty channel
+    memset(&temp, 0, sizeof(ChannelDetails));
+    setChannel(max_idx, temp);
+    
+    return true;
+#else
+    return false;
+#endif
   }
 
   void loadChannels() {
@@ -851,6 +937,20 @@ protected:
     mesh::Utils::toHex(sender, self_id.pub_key, PUB_KEY_SIZE);
     mesh::Utils::toHex(strhash, hash, MAX_HASH_SIZE);
 
+    // Find channel name by matching hash
+    const char* channel_name = "unknown";
+#ifdef MAX_GROUP_CHANNELS
+    ChannelDetails ch;
+    for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
+      if (getChannel(i, ch)) {
+        if (memcmp(ch.channel.hash, channel.hash, PATH_HASH_SIZE) == 0) {
+          channel_name = ch.name;
+          break;
+        }
+      }
+    }
+#endif
+
     JsonDocument doc;
     doc["version"] = 1;
     doc["type"] = "PUB";
@@ -863,6 +963,7 @@ protected:
     doc["message"]["header"] = pkt->header;
     doc["message"]["path"] = getPath(pkt);
     doc["channel"]["hash"] = chhash;
+    doc["channel"]["name"] = channel_name;
 
     messageQueue.push(doc);
 
@@ -1078,9 +1179,9 @@ public:
     _public = addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
 
     // Add additional channels
-    // Correct base64 conversion of hex PSK: 26c7168483fad33f45cb72092ab148642 -> JscWhIP60z9Fy3IJKrFIZA==
-    _hungary = addChannel("Hungary", "JscWhIP60z9Fy3IJKrFIZA==");  // Hungary channel
     addChannel("#hungary", "0q1+QAm3J/tO5cH/UWlOXg==");  // #hungary channel
+    addChannel("#austria", "+qpe8BCBIi4xmoIFNXMh9A==");  // #austria channel (hex: faaa5ef01081222e319a8205357321f)
+    addChannel("#slovakia", "VQuKlUbVYYMQB0/boDaPmA==");  // #slovakia channel (hex: 550b8a9546d5618310074fdba0368f9)
     _ping_channel = addChannel("#ping", "PK4W/QZ7qcMqmL4i6bmFJQ==");  // #ping channel
 
     // Save channels to flash so they persist
@@ -1268,6 +1369,19 @@ public:
         saveContacts();
         Serial.println("   Done.");
       }
+    } else if (strcmp(command, "clear contacts") == 0) {
+      int count_before = getNumContacts();
+      resetContacts();
+      curr_recipient = nullptr;
+      if (_fs->exists("/contacts")) {
+        _fs->remove("/contacts");
+      }
+#ifdef TIMESYNC_MONITOR_ENABLED
+      if (_fs->exists("/timesync_good")) {
+        _fs->remove("/timesync_good");
+      }
+#endif
+      Serial.printf("   All contacts cleared. (%d contacts removed)\n", count_before);
     } else if (memcmp(command, "card", 4) == 0) {
       Serial.printf("Hello %s\n", _prefs.node_name);
       auto pkt = createSelfAdvert(_prefs.node_name, _prefs.node_lat, _prefs.node_lon);
@@ -1287,11 +1401,52 @@ public:
     } else if (memcmp(command, "channel ", 8) == 0) {
       const char* method = &command[8];
       if (memcmp(method, "add ", 4) == 0) {
-        const char* psk = &method[4];
-        ChannelDetails* ch = addChannel(psk, psk);
-        if (ch) {
+        // Parse: "channel add <name> <hex_psk>"
+        // Find the space between name and hex_psk
+        const char* args = &method[4];
+        const char* space_pos = strchr(args, ' ');
+        if (!space_pos) {
+          Serial.println("  ERROR: Usage: channel add <name> <hex_psk>");
+        } else {
+          // Extract name (everything before space)
+          int name_len = space_pos - args;
+          if (name_len <= 0 || name_len >= 32) {
+            Serial.println("  ERROR: Invalid channel name length");
+          } else {
+            char channel_name[32];
+            memcpy(channel_name, args, name_len);
+            channel_name[name_len] = '\0';
+            
+            // Extract hex PSK (everything after space)
+            const char* hex_psk = space_pos + 1;
+            while (*hex_psk == ' ') hex_psk++;  // Skip leading spaces
+            
+            // Convert hex PSK to base64
+            char base64_psk[45];  // Base64 encoded 16 or 32 bytes + null terminator
+            if (hexPskToBase64(hex_psk, base64_psk, sizeof(base64_psk))) {
+              ChannelDetails* ch = addChannel(channel_name, base64_psk);
+              if (ch) {
+                saveChannels();
+                Serial.printf("  Channel '%s' added\n", channel_name);
+              } else {
+                Serial.println("  ERROR: Failed to add channel (max channels reached?)");
+              }
+            } else {
+              Serial.println("  ERROR: Invalid hex PSK format (must be 32 or 64 hex characters)");
+            }
+          }
+        }
+      } else if (memcmp(method, "delete ", 7) == 0) {
+        // Parse: "channel delete <id>"
+        const char* id_str = &method[7];
+        while (*id_str == ' ') id_str++;  // Skip leading spaces
+        
+        int idx = atoi(id_str);
+        if (removeChannelByIdx(idx)) {
           saveChannels();
-          Serial.println("  Channel added\n");
+          Serial.printf("  Channel at index %d deleted\n", idx);
+        } else {
+          Serial.printf("  ERROR: Channel at index %d not found\n", idx);
         }
       } else if (memcmp(method, "delete", 6) == 0) {
         deleteChannels();
@@ -1303,8 +1458,13 @@ public:
         memset(unused, 0, 4);
 
         Serial.println("Channels:");
+        Serial.println("  ID  Name");
+        Serial.println("  --- ----");
         while (getChannel(channel_idx, ch)) {
-          Serial.printf(" [%2d] %s\n", channel_idx, ch.name);
+          char hash_str[3];
+          mesh::Utils::toHex(hash_str, ch.channel.hash, PATH_HASH_SIZE);
+          hash_str[2] = '\0';
+          Serial.printf("  %s  %s (idx: %d)\n", hash_str, ch.name, channel_idx);
           channel_idx++;
         }
         Serial.println();

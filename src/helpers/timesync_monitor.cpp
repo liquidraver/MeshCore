@@ -25,6 +25,7 @@ class MyMesh;            // Used in simple_web_logger
 #define MAX_PACKET_CACHE 50
 #define CACHE_EXPIRE_TIME_MS 60000
 #define CACHE_HASH_SIZE 6
+#define STALE_NODE_TIMEOUT_SECONDS 172800  // 48 hours in seconds (48 * 60 * 60)
 
 struct RepeaterTimeState {
     uint8_t public_key[32];          // Full public key (primary identifier - persistent across name changes)
@@ -364,29 +365,102 @@ bool TimeSyncMonitor::processShameListCommand(BaseChatMesh& mesh, const ContactI
     // Mark packet as responded (prevents duplicates)
     markPacketResponded(packet_hash);
     
-    // Generate the shame list message
+    // Generate the shame list message (allow_empty=true for direct responses)
+    uint32_t current_time = mesh.getRTCClock()->getCurrentTime();
     char shame_message[512];
-    if (generateShameListMessage(shame_message, sizeof(shame_message))) {
-        // Use MeshCore's built-in delayed send system (like PingPongHelper)
+    if (generateShameListMessage(shame_message, sizeof(shame_message), current_time, true)) {
+        // Use the same limit as group messages for consistency
         int text_len = strlen(shame_message);
-        if (text_len > MAX_TEXT_LEN) {
-            return true; // Message too long, but we handled the command
-        }
-        
-        uint8_t temp[5+MAX_TEXT_LEN+1];
-        uint32_t timestamp = mesh.getRTCClock()->getCurrentTime();
-        memcpy(temp, &timestamp, 4);
-        temp[4] = 0;  // attempt = 0
-        memcpy(&temp[5], shame_message, text_len + 1);
-        
-        mesh::Packet* response_pkt = mesh.createDatagram(PAYLOAD_TYPE_TXT_MSG, from.id, from.shared_secret, temp, 5 + text_len);
-        
-        if (response_pkt) {
-            // Send with 2-second delay using MeshCore's built-in system
-            if (from.out_path_len < 0) {
-                mesh.sendFlood(response_pkt, MESSAGE_DELAY_MS);
-            } else {
-                mesh.sendDirect(response_pkt, from.out_path, from.out_path_len, MESSAGE_DELAY_MS);
+        if (text_len <= MAX_MESSAGE_LENGTH) {
+            // Message fits in one packet, send directly
+            uint8_t temp[5+MAX_TEXT_LEN+1];
+            uint32_t timestamp = mesh.getRTCClock()->getCurrentTime();
+            memcpy(temp, &timestamp, 4);
+            temp[4] = 0;  // attempt = 0
+            memcpy(&temp[5], shame_message, text_len + 1);
+            
+            mesh::Packet* response_pkt = mesh.createDatagram(PAYLOAD_TYPE_TXT_MSG, from.id, from.shared_secret, temp, 5 + text_len);
+            
+            if (response_pkt) {
+                // Send with 2-second delay using MeshCore's built-in system
+                if (from.out_path_len < 0) {
+                    mesh.sendFlood(response_pkt, MESSAGE_DELAY_MS);
+                } else {
+                    mesh.sendDirect(response_pkt, from.out_path, from.out_path_len, MESSAGE_DELAY_MS);
+                }
+            }
+        } else {
+            // Message is too long, split it into multiple messages (same logic as group messages)
+            char* line_start = shame_message;
+            char current_msg[256];
+            int current_pos = 0;
+            
+            // Start with the header for the first message only
+            strncpy(current_msg, "SHAME 🔔 SYNC YOUR TIME!", sizeof(current_msg) - 1);
+            current_pos = strlen(current_msg);
+            
+            // Process each line
+            char* line_end = strchr(line_start, '\n');
+            while (line_end != NULL) {
+                int line_len = line_end - line_start;
+                
+                // Check if adding this line would exceed the limit
+                if (current_pos + 1 + line_len > MAX_MESSAGE_LENGTH) {
+                    // Send current message and start new one
+                    current_msg[current_pos] = '\0';
+                    
+                    uint8_t temp[5+MAX_TEXT_LEN+1];
+                    uint32_t timestamp = mesh.getRTCClock()->getCurrentTime();
+                    memcpy(temp, &timestamp, 4);
+                    temp[4] = 0;  // attempt = 0
+                    memcpy(&temp[5], current_msg, strlen(current_msg) + 1);
+                    
+                    mesh::Packet* response_pkt = mesh.createDatagram(PAYLOAD_TYPE_TXT_MSG, from.id, from.shared_secret, temp, 5 + strlen(current_msg));
+                    
+                    if (response_pkt) {
+                        if (from.out_path_len < 0) {
+                            mesh.sendFlood(response_pkt, MESSAGE_DELAY_MS);
+                        } else {
+                            mesh.sendDirect(response_pkt, from.out_path, from.out_path_len, MESSAGE_DELAY_MS);
+                        }
+                    }
+                    
+                    // Start new message WITHOUT header (just continuation of names)
+                    current_msg[0] = '\0';
+                    current_pos = 0;
+                }
+                
+                // Add newline and line content
+                if (current_pos + 1 + line_len < (int)sizeof(current_msg) - 1) {
+                    current_msg[current_pos++] = '\n';
+                    memcpy(&current_msg[current_pos], line_start, line_len);
+                    current_pos += line_len;
+                }
+                
+                // Move to next line
+                line_start = line_end + 1;
+                line_end = strchr(line_start, '\n');
+            }
+            
+            // Send final message if there's content
+            if (current_pos > 0) {
+                current_msg[current_pos] = '\0';
+                
+                uint8_t temp[5+MAX_TEXT_LEN+1];
+                uint32_t timestamp = mesh.getRTCClock()->getCurrentTime();
+                memcpy(temp, &timestamp, 4);
+                temp[4] = 0;  // attempt = 0
+                memcpy(&temp[5], current_msg, strlen(current_msg) + 1);
+                
+                mesh::Packet* response_pkt = mesh.createDatagram(PAYLOAD_TYPE_TXT_MSG, from.id, from.shared_secret, temp, 5 + strlen(current_msg));
+                
+                if (response_pkt) {
+                    if (from.out_path_len < 0) {
+                        mesh.sendFlood(response_pkt, MESSAGE_DELAY_MS);
+                    } else {
+                        mesh.sendDirect(response_pkt, from.out_path, from.out_path_len, MESSAGE_DELAY_MS);
+                    }
+                }
             }
         }
     }
@@ -394,7 +468,7 @@ bool TimeSyncMonitor::processShameListCommand(BaseChatMesh& mesh, const ContactI
     return true;
 }
 
-bool TimeSyncMonitor::generateShameListMessage(char* output_buffer, size_t buffer_size) {
+bool TimeSyncMonitor::generateShameListMessage(char* output_buffer, size_t buffer_size, uint32_t current_time, bool allow_empty) {
     if (!output_buffer || buffer_size < 64) {
         return false;
     }
@@ -405,6 +479,21 @@ bool TimeSyncMonitor::generateShameListMessage(char* output_buffer, size_t buffe
     bool has_offenders = false;
     for (int i = 0; i < MAX_TRACKED_REPEATERS; i++) {
         if (repeater_states[i].is_active && repeater_states[i].on_shame_list) {
+            // Check if node is stale (not seen in last 48 hours)
+            // Use absolute value to handle time wrap-around
+            uint32_t time_since_last_check;
+            if (current_time >= repeater_states[i].last_check_time) {
+                time_since_last_check = current_time - repeater_states[i].last_check_time;
+            } else {
+                // Handle time wrap-around (unlikely but possible)
+                time_since_last_check = (0xFFFFFFFF - repeater_states[i].last_check_time) + current_time + 1;
+            }
+            
+            // Skip stale nodes (older than 48 hours)
+            if (time_since_last_check > STALE_NODE_TIMEOUT_SECONDS) {
+                continue;
+            }
+            
             has_offenders = true;
             
             // Add newline before name
@@ -422,8 +511,14 @@ bool TimeSyncMonitor::generateShameListMessage(char* output_buffer, size_t buffe
     }
     
     if (!has_offenders) {
-        snprintf(output_buffer, buffer_size, "SHAME 🔔 SYNC YOUR TIME!\n(empty - all repeaters in sync!)");
-        return true;
+        if (allow_empty) {
+            // Send empty message for direct responses
+            snprintf(output_buffer, buffer_size, "SHAME 🔔 SYNC YOUR TIME!\n(empty - all repeaters in sync!)");
+            return true;
+        } else {
+            // Don't send message if list is empty (for daily reports)
+            return false;
+        }
     }
     
     output_buffer[pos] = '\0';
@@ -466,9 +561,9 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
     if (current_hour == DAILY_REPORT_HOUR && current_minute == DAILY_REPORT_MINUTE) {
         last_report_day = current_day;
         
-        // Build shame list using the same format as direct messages
+        // Build shame list using the same format as direct messages (allow_empty=false for daily reports)
         char shame_message[512];
-        if (generateShameListMessage(shame_message, sizeof(shame_message))) {
+        if (generateShameListMessage(shame_message, sizeof(shame_message), current_time, false)) {
             // Check if message is too long and needs to be split
             int text_len = strlen(shame_message);
             if (text_len <= MAX_MESSAGE_LENGTH) {
@@ -480,8 +575,9 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
                 char* line_start = shame_message;
                 char current_msg[256];
                 int current_pos = 0;
+                bool is_first_message = true;
                 
-                // Always start with the header
+                // Start with the header for the first message only
                 strncpy(current_msg, "SHAME 🔔 SYNC YOUR TIME!", sizeof(current_msg) - 1);
                 current_pos = strlen(current_msg);
                 
@@ -496,9 +592,10 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
                         current_msg[current_pos] = '\0';
                         sendShameListMessage(mesh, current_msg, node_name);
                         
-                        // Start new message with just the header
-                        strncpy(current_msg, "SHAME 🔔 SYNC YOUR TIME!", sizeof(current_msg) - 1);
-                        current_pos = strlen(current_msg);
+                        // Start new message WITHOUT header (just the continuation of names)
+                        current_msg[0] = '\0';
+                        current_pos = 0;
+                        is_first_message = false;
                     }
                     
                     // Add newline and line content
@@ -514,7 +611,7 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
                 }
                 
                 // Send final message if there's content
-                if (current_pos > strlen("SHAME 🔔 SYNC YOUR TIME!")) {
+                if (current_pos > 0) {
                     current_msg[current_pos] = '\0';
                     sendShameListMessage(mesh, current_msg, node_name);
                 }
