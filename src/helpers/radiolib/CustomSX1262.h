@@ -81,7 +81,7 @@ class CustomSX1262 : public SX1262 {
 
     bool isReceiving() {
       uint16_t irq = getIrqFlags();
-      bool detected = (irq & SX126X_IRQ_HEADER_VALID) || (irq & SX126X_IRQ_PREAMBLE_DETECTED);
+      bool detected = (irq & SX126X_IRQ_HEADER_VALID);
       return detected;
     }
 };
