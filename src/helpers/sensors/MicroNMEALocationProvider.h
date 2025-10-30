@@ -47,6 +47,9 @@ class MicroNMEALocationProvider : public LocationProvider {
     bool _autosync_enabled = true;
     bool _gps_turned_on_for_sync = false;
     unsigned long gps_sync_timeout = 0;
+    static constexpr unsigned long k48hMs = 48UL * 60 * 60 * 1000;
+    static constexpr unsigned long k30sMs = 30UL * 1000;
+    static constexpr unsigned long k1hMs  = 60UL * 60 * 1000;
 
 public :
     MicroNMEALocationProvider(Stream& ser, mesh::RTCClock* clock = NULL, int pin_reset = GPS_RESET, int pin_en = GPS_EN,RefCountedDigitalPin* peripher_power=NULL) :
@@ -59,7 +62,7 @@ public :
             pinMode(_pin_en, OUTPUT);
             digitalWrite(_pin_en, LOW);
         }
-        next_auto_sync = millis() + (48UL * 60 * 60 * 1000);
+        next_auto_sync = millis() + k48hMs;
     }
 
     void begin() override {
@@ -133,30 +136,31 @@ public :
 
         if (!isValid()) time_valid = 0;
 
-        if (millis() > next_check) {
-            next_check = millis() + 1000;
+        unsigned long now = millis();
+        if (now > next_check) {
+            next_check = now + 1000;
             
-            if (next_auto_sync && (long)(millis() - next_auto_sync) > 0) {
+            if (next_auto_sync && (long)(now - next_auto_sync) > 0) {
                 if (_autosync_enabled) {
                     if (isEnabled()) {
                         _time_sync_needed = true;
-                        next_auto_sync = millis() + (48UL * 60 * 60 * 1000);
+                        next_auto_sync = now + k48hMs;
                         MESH_DEBUG_PRINTLN("Auto GPS Time Sync triggered");
                     } else {
                         if (_pin_en != -1) {
                             digitalWrite(_pin_en, PIN_GPS_EN_ACTIVE);
                             _gps_turned_on_for_sync = true;
-                            gps_sync_timeout = millis() + (30 * 1000);
+                            gps_sync_timeout = now + k30sMs;
                             MESH_DEBUG_PRINTLN("Auto GPS sync - turning GPS on briefly (30s timeout)");
-                            next_auto_sync = millis() + (30 * 1000);
+                            next_auto_sync = now + k30sMs;
                         } else {
                             _time_sync_needed = true;
-                            next_auto_sync = millis() + (48UL * 60 * 60 * 1000);
+                            next_auto_sync = now + k48hMs;
                             MESH_DEBUG_PRINTLN("Auto GPS Time Sync triggered (no enable pin - assuming GPS always on)");
                         }
                     }
                 } else {
-                    next_auto_sync = millis() + (1000);
+                    next_auto_sync = now + 1000;
                     MESH_DEBUG_PRINTLN("Auto GPS sync skipped - autosync disabled");
                 }
             }
@@ -175,14 +179,14 @@ public :
                 }
             }
             
-            if (gps_sync_timeout && (long)(millis() - gps_sync_timeout) > 0) {
+            if (gps_sync_timeout && (long)(now - gps_sync_timeout) > 0) {
                 if (_pin_en != -1) {
                     digitalWrite(_pin_en, !PIN_GPS_EN_ACTIVE);
                     MESH_DEBUG_PRINTLN("GPS sync timeout (30s) - turning GPS off");
                 }
                 gps_sync_timeout = 0;
                 _gps_turned_on_for_sync = false;
-                next_auto_sync = millis() + (60 * 60 * 1000);
+                next_auto_sync = now + k1hMs;
             }
             
             if (isValid()) {
