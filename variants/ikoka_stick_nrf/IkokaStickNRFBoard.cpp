@@ -53,11 +53,8 @@ bool IkokaStickNRFBoard::startOTAUpdate(const char *id, char reply[]) {
   // more SRAM required by SoftDevice
   // Note: All config***() function must be called before begin()
   Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
-  Bluefruit.configPrphConn(92, BLE_GAP_EVENT_LENGTH_MIN, 16, 16);
 
   Bluefruit.begin(1, 0);
-  // Set max power. Accepted values are: -40, -30, -20, -16, -12, -8, -4, 0, 4
-  Bluefruit.setTxPower(4);
   // Set the BLE device name
   Bluefruit.setName("XIAO_NRF52_OTA");
 
@@ -70,8 +67,9 @@ bool IkokaStickNRFBoard::startOTAUpdate(const char *id, char reply[]) {
   // Set up and start advertising
   // Advertising packet
   Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
-  Bluefruit.Advertising.addTxPower();
-  Bluefruit.Advertising.addName();
+  Bluefruit.ScanResponse.clearData();
+  Bluefruit.ScanResponse.addTxPower();
+  Bluefruit.ScanResponse.addName();
 
   /* Start Advertising
     - Enable auto advertising if disconnected

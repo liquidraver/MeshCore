@@ -2,8 +2,15 @@
 
 static SerialBLEInterface* instance;
 
+constexpr uint16_t kHighThroughputMinInterval = 6;   // 7.5 ms
+constexpr uint16_t kHighThroughputMaxInterval = 12;  // 15 ms
+constexpr uint16_t kLowPowerMinInterval       = 40;  // 50 ms
+constexpr uint16_t kLowPowerMaxInterval       = 80;  // 100 ms
+constexpr uint16_t kConnectionTimeout         = 400; // 4 s
+
 void SerialBLEInterface::onConnect(uint16_t connection_handle) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: connected");
+  requestHighThroughput(connection_handle);
   // we now set _isDeviceConnected=true in onSecured callback instead
 }
 
@@ -19,6 +26,7 @@ void SerialBLEInterface::onSecured(uint16_t connection_handle) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: onSecured");
   if(instance){
     instance->_isDeviceConnected = true;
+    requestLowPower(connection_handle);
     // no need to stop advertising on connect, as the ble stack does this automatically
   }
 }
@@ -30,14 +38,23 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
   char charpin[20];
   sprintf(charpin, "%d", pin_code);
 
+  Bluefruit.autoConnLed(false);
   Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
-  Bluefruit.configPrphConn(250, BLE_GAP_EVENT_LENGTH_MIN, 16, 16);  // increase MTU
-  Bluefruit.setTxPower(BLE_TX_POWER);
   Bluefruit.begin();
   Bluefruit.setName(device_name);
+  Bluefruit.Advertising.clearData();
+  Bluefruit.ScanResponse.clearData();
+
+  dis.setManufacturer("MeshCore");
+  dis.setModel(device_name);
+  dis.begin();
+
+  bas.begin();
+  bas.write(100);
 
   Bluefruit.Security.setMITM(true);
   Bluefruit.Security.setPIN(charpin);
+  bleuart.setPermission(SECMODE_ENC_WITH_MITM, SECMODE_ENC_WITH_MITM);
 
   Bluefruit.Periph.setConnectCallback(onConnect);
   Bluefruit.Periph.setDisconnectCallback(onDisconnect);
@@ -47,7 +64,6 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
   //bledfu.begin();
 
   // Configure and start the BLE Uart service
-  bleuart.setPermission(SECMODE_ENC_WITH_MITM, SECMODE_ENC_WITH_MITM);
   bleuart.begin();
   
 }
@@ -56,24 +72,15 @@ void SerialBLEInterface::startAdv() {
 
   BLE_DEBUG_PRINTLN("SerialBLEInterface: starting advertising");
   
-  // clean restart if already advertising
-  if(Bluefruit.Advertising.isRunning()){
-    BLE_DEBUG_PRINTLN("SerialBLEInterface: already advertising, stopping to allow clean restart");
-    Bluefruit.Advertising.stop();
-  }
-
-  Bluefruit.Advertising.clearData(); // clear advertising data
-  Bluefruit.ScanResponse.clearData(); // clear scan response data
-  
   // Advertising packet
   Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
-  Bluefruit.Advertising.addTxPower();
   
   // Include the BLE UART (AKA 'NUS') 128-bit UUID
   Bluefruit.Advertising.addService(bleuart);
 
   // Secondary Scan Response packet (optional)
   // Since there is no room for 'Name' in Advertising packet
+  Bluefruit.ScanResponse.addTxPower();
   Bluefruit.ScanResponse.addName();
 
   /* Start Advertising
@@ -85,7 +92,7 @@ void SerialBLEInterface::startAdv() {
    * For recommended advertising interval
    * https://developer.apple.com/library/content/qa/qa1931/_index.html   
    */
-  Bluefruit.Advertising.restartOnDisconnect(false); // don't restart automatically as we handle it in onDisconnect
+  Bluefruit.Advertising.restartOnDisconnect(true);
   Bluefruit.Advertising.setInterval(32, 244);
   Bluefruit.Advertising.setFastTimeout(30);      // number of seconds in fast mode
   Bluefruit.Advertising.start(0);                // 0 = Don't stop advertising after n seconds
@@ -133,9 +140,34 @@ void SerialBLEInterface::disable() {
 
   Bluefruit.Advertising.restartOnDisconnect(false);
   Bluefruit.Advertising.stop();
-  Bluefruit.Advertising.clearData();
 
   stopAdv();
+}
+
+void SerialBLEInterface::requestHighThroughput(uint16_t conn_handle) {
+  if (conn_handle == BLE_CONN_HANDLE_INVALID) {
+    return;
+  }
+  ble_gap_conn_params_t params = {
+    .min_conn_interval = kHighThroughputMinInterval,
+    .max_conn_interval = kHighThroughputMaxInterval,
+    .slave_latency     = 0,
+    .conn_sup_timeout  = kConnectionTimeout
+  };
+  sd_ble_gap_conn_param_update(conn_handle, &params);
+}
+
+void SerialBLEInterface::requestLowPower(uint16_t conn_handle) {
+  if (conn_handle == BLE_CONN_HANDLE_INVALID) {
+    return;
+  }
+  ble_gap_conn_params_t params = {
+    .min_conn_interval = kLowPowerMinInterval,
+    .max_conn_interval = kLowPowerMaxInterval,
+    .slave_latency     = 0,
+    .conn_sup_timeout  = kConnectionTimeout
+  };
+  sd_ble_gap_conn_param_update(conn_handle, &params);
 }
 
 size_t SerialBLEInterface::writeFrame(const uint8_t src[], size_t len) {

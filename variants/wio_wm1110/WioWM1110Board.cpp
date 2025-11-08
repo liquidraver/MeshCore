@@ -48,10 +48,8 @@ void WioWM1110Board::begin() {
 
 bool WioWM1110Board::startOTAUpdate(const char *id, char reply[]) {
   Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
-  Bluefruit.configPrphConn(92, BLE_GAP_EVENT_LENGTH_MIN, 16, 16);
 
   Bluefruit.begin(1, 0);
-  Bluefruit.setTxPower(4);
   Bluefruit.setName("WM1110_OTA");
 
   Bluefruit.Periph.setConnectCallback(connect_callback);
@@ -60,8 +58,9 @@ bool WioWM1110Board::startOTAUpdate(const char *id, char reply[]) {
   bledfu.begin();
 
   Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
-  Bluefruit.Advertising.addTxPower();
-  Bluefruit.Advertising.addName();
+  Bluefruit.ScanResponse.clearData();
+  Bluefruit.ScanResponse.addTxPower();
+  Bluefruit.ScanResponse.addName();
   Bluefruit.Advertising.restartOnDisconnect(true);
   Bluefruit.Advertising.setInterval(32, 244);
   Bluefruit.Advertising.setFastTimeout(30);

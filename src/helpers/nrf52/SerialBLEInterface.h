@@ -9,6 +9,8 @@
 
 class SerialBLEInterface : public BaseSerialInterface {
   BLEUart bleuart;
+  BLEDis dis;
+  BLEBas bas;
   bool _isEnabled;
   bool _isDeviceConnected;
   unsigned long _last_write;
@@ -26,6 +28,8 @@ class SerialBLEInterface : public BaseSerialInterface {
   static void onConnect(uint16_t connection_handle);
   static void onDisconnect(uint16_t connection_handle, uint8_t reason);
   static void onSecured(uint16_t connection_handle);
+  static void requestHighThroughput(uint16_t conn_handle);
+  static void requestLowPower(uint16_t conn_handle);
 
 public:
   SerialBLEInterface() {
