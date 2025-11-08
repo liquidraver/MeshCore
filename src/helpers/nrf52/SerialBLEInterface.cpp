@@ -31,6 +31,22 @@ void SerialBLEInterface::onSecured(uint16_t connection_handle) {
   }
 }
 
+bool SerialBLEInterface::onPairPasskey(uint16_t conn_handle, uint8_t const passkey[6], bool match_request) {
+  (void)conn_handle;
+  (void)match_request;
+  char displayed[7] = {0};
+  memcpy(displayed, passkey, 6);
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: passkey %s", displayed);
+  return true;
+}
+
+void SerialBLEInterface::onPairComplete(uint16_t conn_handle, uint8_t auth_status) {
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: pair status=%d", auth_status);
+  if (auth_status == BLE_GAP_SEC_STATUS_SUCCESS) {
+    requestLowPower(conn_handle);
+  }
+}
+
 void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
 
   instance = this;
@@ -54,6 +70,8 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
 
   Bluefruit.Security.setMITM(true);
   Bluefruit.Security.setPIN(charpin);
+  Bluefruit.Security.setPairPasskeyCallback(onPairPasskey);
+  Bluefruit.Security.setPairCompleteCallback(onPairComplete);
   bleuart.setPermission(SECMODE_ENC_WITH_MITM, SECMODE_ENC_WITH_MITM);
 
   Bluefruit.Periph.setConnectCallback(onConnect);

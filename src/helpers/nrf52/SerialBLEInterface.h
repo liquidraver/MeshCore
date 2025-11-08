@@ -28,6 +28,8 @@ class SerialBLEInterface : public BaseSerialInterface {
   static void onConnect(uint16_t connection_handle);
   static void onDisconnect(uint16_t connection_handle, uint8_t reason);
   static void onSecured(uint16_t connection_handle);
+  static bool onPairPasskey(uint16_t conn_handle, uint8_t const passkey[6], bool match_request);
+  static void onPairComplete(uint16_t conn_handle, uint8_t auth_status);
   static void requestHighThroughput(uint16_t conn_handle);
   static void requestLowPower(uint16_t conn_handle);
 
