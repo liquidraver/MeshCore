@@ -23,13 +23,17 @@ class SerialBLEInterface : public BaseSerialInterface {
   #define FRAME_QUEUE_SIZE  4
   int send_queue_len;
   Frame send_queue[FRAME_QUEUE_SIZE];
+  int recv_queue_len;
+  Frame recv_queue[FRAME_QUEUE_SIZE];
 
-  void clearBuffers() { send_queue_len = 0; }
+  void clearBuffers() { send_queue_len = 0; recv_queue_len = 0; }
   static void onConnect(uint16_t connection_handle);
   static void onDisconnect(uint16_t connection_handle, uint8_t reason);
   static void onSecured(uint16_t connection_handle);
   static bool onPairPasskey(uint16_t conn_handle, uint8_t const passkey[6], bool match_request);
   static void onPairComplete(uint16_t conn_handle, uint8_t auth_status);
+  static bool onRejectPair(uint16_t conn_handle, uint8_t const passkey[6], bool match_request);
+  static void onBleUartRX(uint16_t conn_handle);
   static void requestHighThroughput(uint16_t conn_handle);
   static void requestLowPower(uint16_t conn_handle);
 
@@ -39,6 +43,7 @@ public:
     _isDeviceConnected = false;
     _last_write = 0;
     send_queue_len = 0;
+    recv_queue_len = 0;
   }
 
   void startAdv();
