@@ -3,18 +3,6 @@
 
 static SerialBLEInterface* instance;
 
-constexpr uint16_t kHighThroughputMinInterval = 6;   // 7.5 ms
-constexpr uint16_t kHighThroughputMaxInterval = 12;  // 15 ms
-constexpr uint16_t kLowPowerMinInterval       = 40;  // 50 ms
-constexpr uint16_t kLowPowerMaxInterval       = 80;  // 100 ms
-constexpr uint16_t kConnectionTimeout         = 400; // 4 s
-
-void SerialBLEInterface::onConnect(uint16_t connection_handle) {
-  BLE_DEBUG_PRINTLN("SerialBLEInterface: connected");
-  requestHighThroughput(connection_handle);
-  // we now set _isDeviceConnected=true in onSecured callback instead
-}
-
 void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected reason=%d", reason);
   if(instance){
@@ -28,7 +16,6 @@ void SerialBLEInterface::onSecured(uint16_t connection_handle) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: onSecured");
   if(instance){
     instance->_isDeviceConnected = true;
-    requestLowPower(connection_handle);
     // no need to stop advertising on connect, as the ble stack does this automatically
   }
 }
@@ -40,13 +27,6 @@ bool SerialBLEInterface::onPairPasskey(uint16_t conn_handle, uint8_t const passk
   memcpy(displayed, passkey, 6);
   BLE_DEBUG_PRINTLN("SerialBLEInterface: passkey %s", displayed);
   return true;
-}
-
-void SerialBLEInterface::onPairComplete(uint16_t conn_handle, uint8_t auth_status) {
-  BLE_DEBUG_PRINTLN("SerialBLEInterface: pair status=%d", auth_status);
-  if (auth_status == BLE_GAP_SEC_STATUS_SUCCESS) {
-    requestLowPower(conn_handle);
-  }
 }
 
 void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
@@ -73,10 +53,8 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
   Bluefruit.Security.setMITM(true);
   Bluefruit.Security.setPIN(charpin);
   Bluefruit.Security.setPairPasskeyCallback(onPairPasskey);
-  Bluefruit.Security.setPairCompleteCallback(onPairComplete);
   bleuart.setPermission(SECMODE_ENC_WITH_MITM, SECMODE_ENC_WITH_MITM);
 
-  Bluefruit.Periph.setConnectCallback(onConnect);
   Bluefruit.Periph.setDisconnectCallback(onDisconnect);
   Bluefruit.Security.setSecuredCallback(onSecured);
 
@@ -142,7 +120,6 @@ void SerialBLEInterface::enable() {
   _isEnabled = true;
   clearBuffers();
   Bluefruit.Security.setPairPasskeyCallback(onPairPasskey);
-  Bluefruit.Security.setPairCompleteCallback(onPairComplete);
 
   // Start advertising
   startAdv();
@@ -171,32 +148,6 @@ void SerialBLEInterface::disable() {
   stopAdv();
 }
 
-void SerialBLEInterface::requestHighThroughput(uint16_t conn_handle) {
-  if (conn_handle == BLE_CONN_HANDLE_INVALID) {
-    return;
-  }
-  ble_gap_conn_params_t params = {
-    .min_conn_interval = kHighThroughputMinInterval,
-    .max_conn_interval = kHighThroughputMaxInterval,
-    .slave_latency     = 0,
-    .conn_sup_timeout  = kConnectionTimeout
-  };
-  sd_ble_gap_conn_param_update(conn_handle, &params);
-}
-
-void SerialBLEInterface::requestLowPower(uint16_t conn_handle) {
-  if (conn_handle == BLE_CONN_HANDLE_INVALID) {
-    return;
-  }
-  ble_gap_conn_params_t params = {
-    .min_conn_interval = kLowPowerMinInterval,
-    .max_conn_interval = kLowPowerMaxInterval,
-    .slave_latency     = 0,
-    .conn_sup_timeout  = kConnectionTimeout
-  };
-  sd_ble_gap_conn_param_update(conn_handle, &params);
-}
-
 size_t SerialBLEInterface::writeFrame(const uint8_t src[], size_t len) {
   if (len > MAX_FRAME_SIZE) {
     BLE_DEBUG_PRINTLN("writeFrame(), frame too big, len=%d", len);
@@ -215,6 +166,7 @@ size_t SerialBLEInterface::writeFrame(const uint8_t src[], size_t len) {
 
     return len;
   }
+
   return 0;
 }
 
@@ -230,7 +182,7 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
   ) {
     _last_write = millis();
     bleuart.write(send_queue[0].buf, send_queue[0].len);
-    BLE_DEBUG_PRINTLN("writeBytes: sz=%d, hdr=%d", (uint32_t)send_queue[0].len, (uint32_t) send_queue[0].buf[0]);
+    BLE_DEBUG_PRINTLN("SerialBLEInterface writeBytes: sz=%d hdr=%d", (uint32_t)send_queue[0].len, (uint32_t) send_queue[0].buf[0]);
 
     send_queue_len--;
     for (int i = 0; i < send_queue_len; i++) {   // delete top item from queue
@@ -244,10 +196,11 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
       for (int i = 0; i < recv_queue_len; i++) {
         recv_queue[i] = recv_queue[i + 1];
       }
-      BLE_DEBUG_PRINTLN("readBytes: sz=%d, hdr=%d", len, (uint32_t) dest[0]);
+      BLE_DEBUG_PRINTLN("SerialBLEInterface readBytes: sz=%d hdr=%d", len, (uint32_t) dest[0]);
       return len;
     }
   }
+
   return 0;
 }
 
@@ -268,9 +221,10 @@ void SerialBLEInterface::onBleUartRX(uint16_t conn_handle) {
   if (!instance) {
     return;
   }
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: RX activity");
   while (instance->bleuart.available()) {
     if (instance->recv_queue_len >= FRAME_QUEUE_SIZE) {
-      BLE_DEBUG_PRINTLN("SerialBLEInterface: recv queue full, dropping byte");
+      BLE_DEBUG_PRINTLN("SerialBLEInterface: recv queue full (len=%d avail=%d)", instance->recv_queue_len, instance->bleuart.available());
       while (instance->bleuart.available()) {
         instance->bleuart.read();
       }
@@ -282,5 +236,6 @@ void SerialBLEInterface::onBleUartRX(uint16_t conn_handle) {
     frame.len = chunk;
     instance->bleuart.readBytes(frame.buf, chunk);
     instance->recv_queue_len++;
+    BLE_DEBUG_PRINTLN("SerialBLEInterface: queued RX chunk=%d queue=%d", chunk, instance->recv_queue_len);
   }
 }
