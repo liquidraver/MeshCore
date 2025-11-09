@@ -7,8 +7,12 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
   BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected reason=%d", reason);
   if(instance){
     instance->_isDeviceConnected = false;
-    instance->recv_queue_len = 0;
-    instance->startAdv();
+    instance->clearBuffers();
+    if (instance->_isEnabled) {
+      instance->startAdv();
+    } else {
+      Bluefruit.Advertising.stop();
+    }
   }
 }
 
@@ -122,6 +126,8 @@ void SerialBLEInterface::enable() {
   Bluefruit.Security.setPairPasskeyCallback(onPairPasskey);
 
   // Start advertising
+  Bluefruit.Advertising.clearData();
+  Bluefruit.ScanResponse.clearData();
   startAdv();
 }
 
@@ -129,6 +135,7 @@ void SerialBLEInterface::disable() {
   _isEnabled = false;
   BLE_DEBUG_PRINTLN("SerialBLEInterface::disable");
   clearBuffers();
+  _isDeviceConnected = false;
 
 #ifdef RAK_BOARD
   Bluefruit.disconnect(Bluefruit.connHandle());
@@ -140,11 +147,8 @@ void SerialBLEInterface::disable() {
 #endif
 
   Bluefruit.Security.setPairPasskeyCallback(onRejectPair);
-  Bluefruit.Security.setPairCompleteCallback(nullptr);
 
   Bluefruit.Advertising.restartOnDisconnect(false);
-  Bluefruit.Advertising.stop();
-
   stopAdv();
 }
 
@@ -224,7 +228,7 @@ void SerialBLEInterface::onBleUartRX(uint16_t conn_handle) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: RX activity");
   while (instance->bleuart.available()) {
     if (instance->recv_queue_len >= FRAME_QUEUE_SIZE) {
-      BLE_DEBUG_PRINTLN("SerialBLEInterface: recv queue full (len=%d avail=%d)", instance->recv_queue_len, instance->bleuart.available());
+    BLE_DEBUG_PRINTLN("SerialBLEInterface: recv queue full (len=%d avail=%d)", instance->recv_queue_len, instance->bleuart.available());
       while (instance->bleuart.available()) {
         instance->bleuart.read();
       }
