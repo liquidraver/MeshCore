@@ -11,7 +11,7 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
     if (instance->_isEnabled) {
       instance->startAdv();
     } else {
-      Bluefruit.Advertising.stop();
+      instance->stopAdv();
     }
   }
 }
@@ -44,8 +44,6 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
   Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
   Bluefruit.begin();
   Bluefruit.setName(device_name);
-  Bluefruit.Advertising.clearData();
-  Bluefruit.ScanResponse.clearData();
 
   dis.setManufacturer("MeshCore");
   dis.setModel(device_name);
@@ -75,6 +73,9 @@ void SerialBLEInterface::startAdv() {
 
   BLE_DEBUG_PRINTLN("SerialBLEInterface: starting advertising");
   
+  Bluefruit.Advertising.clearData();
+  Bluefruit.ScanResponse.clearData();
+
   // Advertising packet
   Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
   
@@ -126,8 +127,6 @@ void SerialBLEInterface::enable() {
   Bluefruit.Security.setPairPasskeyCallback(onPairPasskey);
 
   // Start advertising
-  Bluefruit.Advertising.clearData();
-  Bluefruit.ScanResponse.clearData();
   startAdv();
 }
 
