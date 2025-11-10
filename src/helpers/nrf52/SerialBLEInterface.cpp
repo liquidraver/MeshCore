@@ -11,7 +11,7 @@ void SerialBLEInterface::onConnect(uint16_t connection_handle) {
 void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected reason=0x%02X", reason);
   if(instance){
-    if (reason == BLE_HCI_CONN_TIMEOUT) {
+    if (reason == BLE_HCI_CONNECTION_TIMEOUT) {
       BLE_DEBUG_PRINTLN("SerialBLEInterface: timeout detected, sweeping lingering handles");
       uint16_t handles[4];
       int count = Bluefruit.getConnectedHandles(handles, 4);
