@@ -199,7 +199,6 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
     if (instance->_isEnabled) {
       instance->_pendingAdvCheck = true;
       instance->_nextAdvCheckMs = millis() + BLE_ADV_VERIFY_DELAY_MS;
-      instance->startAdv();
     } else {
       instance->_pendingAdvCheck = false;
       instance->_nextAdvCheckMs = 0;
