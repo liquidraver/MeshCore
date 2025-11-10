@@ -14,6 +14,8 @@ class SerialBLEInterface : public BaseSerialInterface {
   bool _isEnabled;
   bool _isDeviceConnected;
   unsigned long _last_write;
+  bool _pendingAdvCheck;
+  uint32_t _nextAdvCheckMs;
 
   struct Frame {
     uint8_t len;
@@ -40,6 +42,8 @@ public:
     _last_write = 0;
     send_queue_len = 0;
     recv_queue_len = 0;
+    _pendingAdvCheck = false;
+    _nextAdvCheckMs = 0;
   }
 
   void startAdv();

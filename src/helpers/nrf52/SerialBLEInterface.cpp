@@ -1,44 +1,16 @@
 #include "SerialBLEInterface.h"
 #include <algorithm>
+#include <cstdio>
 
 static SerialBLEInterface* instance;
-
-void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason) {
-  BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected reason=%d", reason);
-  if(instance){
-    instance->_isDeviceConnected = false;
-    instance->clearBuffers();
-    if (instance->_isEnabled) {
-      instance->startAdv();
-    } else {
-      instance->stopAdv();
-    }
-  }
-}
-
-void SerialBLEInterface::onSecured(uint16_t connection_handle) {
-  BLE_DEBUG_PRINTLN("SerialBLEInterface: onSecured");
-  if(instance){
-    instance->_isDeviceConnected = true;
-    // no need to stop advertising on connect, as the ble stack does this automatically
-  }
-}
-
-bool SerialBLEInterface::onPairPasskey(uint16_t conn_handle, uint8_t const passkey[6], bool match_request) {
-  (void)conn_handle;
-  (void)match_request;
-  char displayed[7] = {0};
-  memcpy(displayed, passkey, 6);
-  BLE_DEBUG_PRINTLN("SerialBLEInterface: passkey %s", displayed);
-  return true;
-}
+static constexpr uint32_t BLE_ADV_VERIFY_DELAY_MS = 300;
 
 void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
 
   instance = this;
 
   char charpin[20];
-  sprintf(charpin, "%d", pin_code);
+  snprintf(charpin, sizeof(charpin), "%06lu", static_cast<unsigned long>(pin_code));
 
   Bluefruit.autoConnLed(false);
   Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
@@ -59,6 +31,8 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
 
   Bluefruit.Periph.setDisconnectCallback(onDisconnect);
   Bluefruit.Security.setSecuredCallback(onSecured);
+  _pendingAdvCheck = false;
+  _nextAdvCheckMs = 0;
 
   // To be consistent OTA DFU should be added first if it exists
   //bledfu.begin();
@@ -69,56 +43,6 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
   
 }
 
-void SerialBLEInterface::startAdv() {
-
-  BLE_DEBUG_PRINTLN("SerialBLEInterface: starting advertising");
-  
-  Bluefruit.Advertising.clearData();
-  Bluefruit.ScanResponse.clearData();
-
-  // Advertising packet
-  Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
-  
-  // Include the BLE UART (AKA 'NUS') 128-bit UUID
-  Bluefruit.Advertising.addService(bleuart);
-
-  // Secondary Scan Response packet (optional)
-  // Since there is no room for 'Name' in Advertising packet
-  Bluefruit.ScanResponse.addTxPower();
-  Bluefruit.ScanResponse.addName();
-
-  /* Start Advertising
-   * - Enable auto advertising if disconnected
-   * - Interval:  fast mode = 20 ms, slow mode = 152.5 ms
-   * - Timeout for fast mode is 30 seconds
-   * - Start(timeout) with timeout = 0 will advertise forever (until connected)
-   * 
-   * For recommended advertising interval
-   * https://developer.apple.com/library/content/qa/qa1931/_index.html   
-   */
-  Bluefruit.Advertising.restartOnDisconnect(true);
-  Bluefruit.Advertising.setInterval(32, 244);
-  Bluefruit.Advertising.setFastTimeout(30);      // number of seconds in fast mode
-  Bluefruit.Advertising.start(0);                // 0 = Don't stop advertising after n seconds
-
-}
-
-void SerialBLEInterface::stopAdv() {
-
-  BLE_DEBUG_PRINTLN("SerialBLEInterface: stopping advertising");
-  
-  // we only want to stop advertising if it's running, otherwise an invalid state error is logged by ble stack
-  if(!Bluefruit.Advertising.isRunning()){
-    return;
-  }
-
-  // stop advertising
-  Bluefruit.Advertising.stop();
-
-}
-
-// ---------- public methods
-
 void SerialBLEInterface::enable() { 
   if (_isEnabled) return;
 
@@ -128,6 +52,8 @@ void SerialBLEInterface::enable() {
 
   // Start advertising
   startAdv();
+  _pendingAdvCheck = false;
+  _nextAdvCheckMs = 0;
 }
 
 void SerialBLEInterface::disable() {
@@ -135,6 +61,8 @@ void SerialBLEInterface::disable() {
   BLE_DEBUG_PRINTLN("SerialBLEInterface::disable");
   clearBuffers();
   _isDeviceConnected = false;
+  _pendingAdvCheck = false;
+  _nextAdvCheckMs = 0;
 
 #ifdef RAK_BOARD
   Bluefruit.disconnect(Bluefruit.connHandle());
@@ -180,6 +108,14 @@ bool SerialBLEInterface::isWriteBusy() const {
 }
 
 size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
+  if (_pendingAdvCheck && (long)(millis() - _nextAdvCheckMs) >= 0) {
+    _pendingAdvCheck = false;
+    if (_isEnabled && !Bluefruit.Advertising.isRunning()) {
+      BLE_DEBUG_PRINTLN("SerialBLEInterface: advertising inactive after disconnect, restarting");
+      startAdv();
+    }
+  }
+
   if (send_queue_len > 0   // first, check send queue
     && millis() >= _last_write + BLE_WRITE_MIN_INTERVAL    // space the writes apart
   ) {
@@ -211,6 +147,83 @@ bool SerialBLEInterface::isConnected() const {
   return _isDeviceConnected;
 }
 
+void SerialBLEInterface::startAdv() {
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: starting advertising");
+
+  Bluefruit.Advertising.clearData();
+  Bluefruit.ScanResponse.clearData();
+
+  // Advertising packet
+  Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
+
+  // Include the BLE UART (AKA 'NUS') 128-bit UUID
+  Bluefruit.Advertising.addService(bleuart);
+
+  // Secondary Scan Response packet (optional)
+  // Since there is no room for 'Name' in Advertising packet
+  Bluefruit.ScanResponse.addTxPower();
+  Bluefruit.ScanResponse.addName();
+
+  /* Start Advertising
+   * - Enable auto advertising if disconnected
+   * - Interval:  fast mode = 20 ms, slow mode = 152.5 ms
+   * - Timeout for fast mode is 30 seconds
+   * - Start(timeout) with timeout = 0 will advertise forever (until connected)
+   *
+   * For recommended advertising interval
+   * https://developer.apple.com/library/content/qa/qa1931/_index.html
+   */
+  Bluefruit.Advertising.restartOnDisconnect(true);
+  Bluefruit.Advertising.setInterval(32, 244);
+  Bluefruit.Advertising.setFastTimeout(30);      // number of seconds in fast mode
+  Bluefruit.Advertising.start(0);                // 0 = Don't stop advertising after n seconds
+}
+
+void SerialBLEInterface::stopAdv() {
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: stopping advertising");
+
+  // we only want to stop advertising if it's running, otherwise an invalid state error is logged by ble stack
+  if(!Bluefruit.Advertising.isRunning()){
+    return;
+  }
+
+  // stop advertising
+  Bluefruit.Advertising.stop();
+}
+
+void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason) {
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected reason=%d", reason);
+  if(instance){
+    instance->_isDeviceConnected = false;
+    instance->clearBuffers();
+    if (instance->_isEnabled) {
+      instance->_pendingAdvCheck = true;
+      instance->_nextAdvCheckMs = millis() + BLE_ADV_VERIFY_DELAY_MS;
+      instance->startAdv();
+    } else {
+      instance->_pendingAdvCheck = false;
+      instance->_nextAdvCheckMs = 0;
+      instance->stopAdv();
+    }
+  }
+}
+
+void SerialBLEInterface::onSecured(uint16_t connection_handle) {
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: onSecured");
+  if(instance){
+    instance->_isDeviceConnected = true;
+  }
+}
+
+bool SerialBLEInterface::onPairPasskey(uint16_t conn_handle, uint8_t const passkey[6], bool match_request) {
+  (void)conn_handle;
+  (void)match_request;
+  char displayed[7] = {0};
+  memcpy(displayed, passkey, 6);
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: passkey %s", displayed);
+  return true;
+}
+
 bool SerialBLEInterface::onRejectPair(uint16_t conn_handle, uint8_t const passkey[6], bool match_request) {
   (void)passkey;
   (void)match_request;
@@ -228,9 +241,15 @@ void SerialBLEInterface::onBleUartRX(uint16_t conn_handle) {
   while (instance->bleuart.available()) {
     if (instance->recv_queue_len >= FRAME_QUEUE_SIZE) {
     BLE_DEBUG_PRINTLN("SerialBLEInterface: recv queue full (len=%d avail=%d)", instance->recv_queue_len, instance->bleuart.available());
+      size_t dropped = 0;
       while (instance->bleuart.available()) {
-        instance->bleuart.read();
+        int byte_read = instance->bleuart.read();
+        if (byte_read < 0) {
+          break;
+        }
+        dropped++;
       }
+      BLE_DEBUG_PRINTLN("SerialBLEInterface: dropped %d bytes due to overflow", static_cast<int>(dropped));
       break;
     }
     size_t available = instance->bleuart.available();
