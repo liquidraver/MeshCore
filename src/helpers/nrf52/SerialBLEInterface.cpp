@@ -1,4 +1,5 @@
 #include "SerialBLEInterface.h"
+#include <ble_hci.h>
 
 static SerialBLEInterface* instance;
 
@@ -8,11 +9,24 @@ void SerialBLEInterface::onConnect(uint16_t connection_handle) {
 }
 
 void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason) {
-  BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected reason=%d", reason);
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected reason=0x%02X", reason);
   if(instance){
-    instance->_isDeviceConnected = false;
-    instance->startAdv();
-  }
+    if (reason == BLE_HCI_CONN_TIMEOUT) {
+      BLE_DEBUG_PRINTLN("SerialBLEInterface: timeout detected, sweeping lingering handles");
+      uint16_t handles[4];
+      int count = Bluefruit.getConnectedHandles(handles, 4);
+      for (int i = 0; i < count; i++) {
+        BLE_DEBUG_PRINTLN("SerialBLEInterface: forcing disconnect handle=%d", handles[i]);
+        Bluefruit.disconnect(handles[i]);
+      }
+      // Ensure advertising restarts cleanly even if the stack was wedged.
+      Bluefruit.Advertising.stop();
+      instance->_isDeviceConnected = false;
+      instance->startAdv();
+    } else {
+      instance->_isDeviceConnected = false;
+    }
+    }
 }
 
 void SerialBLEInterface::onSecured(uint16_t connection_handle) {
@@ -57,18 +71,18 @@ void SerialBLEInterface::startAdv() {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: starting advertising");
   
   // clean restart if already advertising
-  if(Bluefruit.Advertising.isRunning()){
+  if (Bluefruit.Advertising.isRunning()) {
     BLE_DEBUG_PRINTLN("SerialBLEInterface: already advertising, stopping to allow clean restart");
     Bluefruit.Advertising.stop();
   }
 
   Bluefruit.Advertising.clearData(); // clear advertising data
   Bluefruit.ScanResponse.clearData(); // clear scan response data
-  
+
   // Advertising packet
   Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
   Bluefruit.Advertising.addTxPower();
-  
+
   // Include the BLE UART (AKA 'NUS') 128-bit UUID
   Bluefruit.Advertising.addService(bleuart);
 
@@ -81,15 +95,14 @@ void SerialBLEInterface::startAdv() {
    * - Interval:  fast mode = 20 ms, slow mode = 152.5 ms
    * - Timeout for fast mode is 30 seconds
    * - Start(timeout) with timeout = 0 will advertise forever (until connected)
-   * 
+   *
    * For recommended advertising interval
-   * https://developer.apple.com/library/content/qa/qa1931/_index.html   
+   * https://developer.apple.com/library/content/qa/qa1931/_index.html
    */
-  Bluefruit.Advertising.restartOnDisconnect(false); // don't restart automatically as we handle it in onDisconnect
+  Bluefruit.Advertising.restartOnDisconnect(true);
   Bluefruit.Advertising.setInterval(32, 244);
   Bluefruit.Advertising.setFastTimeout(30);      // number of seconds in fast mode
   Bluefruit.Advertising.start(0);                // 0 = Don't stop advertising after n seconds
-
 }
 
 void SerialBLEInterface::stopAdv() {
