@@ -56,6 +56,20 @@ void SerialBLEInterface::enable() {
   _nextAdvCheckMs = 0;
 }
 
+void SerialBLEInterface::closeAllConnections() {
+  uint16_t handles[4] = {0};
+  while (true) {
+    int count = Bluefruit.getConnectedHandles(handles, 4);
+    if (count <= 0) {
+      break;
+    }
+    for (int i = 0; i < count; i++) {
+      BLE_DEBUG_PRINTLN("SerialBLEInterface: closing lingering connection handle=%d", handles[i]);
+      Bluefruit.disconnect(handles[i]);
+    }
+  }
+}
+
 void SerialBLEInterface::disable() {
   _isEnabled = false;
   BLE_DEBUG_PRINTLN("SerialBLEInterface::disable");
@@ -64,10 +78,7 @@ void SerialBLEInterface::disable() {
   _pendingAdvCheck = false;
   _nextAdvCheckMs = 0;
 
-  uint16_t conn_id;
-  if (Bluefruit.getConnectedHandles(&conn_id, 1) > 0) {
-    Bluefruit.disconnect(conn_id);
-  }
+  closeAllConnections();
 
   Bluefruit.Security.setPairPasskeyCallback(onRejectPair);
 
@@ -192,6 +203,7 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
   if(instance){
     instance->_isDeviceConnected = false;
     instance->clearBuffers();
+    instance->closeAllConnections();
     if (instance->_isEnabled) {
       instance->_pendingAdvCheck = true;
       instance->_nextAdvCheckMs = millis() + BLE_ADV_VERIFY_DELAY_MS;

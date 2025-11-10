@@ -48,6 +48,7 @@ public:
 
   void startAdv();
   void stopAdv();
+  void closeAllConnections();
   void begin(const char* device_name, uint32_t pin_code);
 
   // BaseSerialInterface methods
