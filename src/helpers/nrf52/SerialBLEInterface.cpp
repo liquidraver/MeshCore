@@ -64,14 +64,10 @@ void SerialBLEInterface::disable() {
   _pendingAdvCheck = false;
   _nextAdvCheckMs = 0;
 
-#ifdef RAK_BOARD
-  Bluefruit.disconnect(Bluefruit.connHandle());
-#else
   uint16_t conn_id;
   if (Bluefruit.getConnectedHandles(&conn_id, 1) > 0) {
     Bluefruit.disconnect(conn_id);
   }
-#endif
 
   Bluefruit.Security.setPairPasskeyCallback(onRejectPair);
 
