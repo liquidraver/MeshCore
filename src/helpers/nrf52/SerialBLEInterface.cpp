@@ -21,9 +21,11 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
       }
       // Ensure advertising restarts cleanly even if the stack was wedged.
       Bluefruit.Advertising.stop();
+      instance->clearBuffers();
       instance->_isDeviceConnected = false;
       instance->startAdv();
     } else {
+      instance->clearBuffers();
       instance->_isDeviceConnected = false;
     }
     }
