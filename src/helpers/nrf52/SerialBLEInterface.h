@@ -4,7 +4,7 @@
 #include <bluefruit.h>
 
 #ifndef BLE_TX_POWER
-#define BLE_TX_POWER 4
+#define BLE_TX_POWER 0
 #endif
 
 class SerialBLEInterface : public BaseSerialInterface {
@@ -26,6 +26,8 @@ class SerialBLEInterface : public BaseSerialInterface {
   static void onConnect(uint16_t connection_handle);
   static void onDisconnect(uint16_t connection_handle, uint8_t reason);
   static void onSecured(uint16_t connection_handle);
+  static bool onPairingPasskey(uint16_t connection_handle, uint8_t const passkey[6], bool match_request);
+  static void onPairingComplete(uint16_t connection_handle, uint8_t auth_status);
 
 public:
   SerialBLEInterface() {
