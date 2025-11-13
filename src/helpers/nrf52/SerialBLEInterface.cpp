@@ -22,8 +22,6 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
     instance->_connectionHandle = 0xFFFF;  // Clear connection handle (BLE_CONN_HANDLE_INVALID)
     instance->_pending_writes = 0;  // Reset pending writes on disconnect
     instance->_last_tx_complete = millis();  // Reset TX completion timestamp
-    // Clear duplicate detection buffer to avoid rejecting first packet from new connection
-    instance->_lastReceivedFrameLen = 0;
     // Don't manually restart advertising - let restartOnDisconnect(true) handle it
     // This prevents conflicts with iOS rapid reconnection attempts
   }
@@ -277,25 +275,7 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
   } else {
     int len = bleuart.available();
     if (len > 0 && len <= MAX_FRAME_SIZE) {
-      // Read into temporary buffer first to check for duplicates
-      uint8_t tempBuf[MAX_FRAME_SIZE];
-      bleuart.readBytes(tempBuf, len);
-
-      // Check for duplicate packet
-      // This prevents processing the same packet twice during rapid reconnects
-      if (_lastReceivedFrameLen == len &&
-          memcmp(_lastReceivedFrame, tempBuf, len) == 0) {
-        BLE_DEBUG_PRINTLN("readBytes: dropping duplicate packet, sz=%d", len);
-        return 0;  // Drop duplicate
-      }
-
-      // New packet - copy to output and save for duplicate detection
-      memcpy(dest, tempBuf, len);
-      if (len <= MAX_FRAME_SIZE_DUP_CHECK) {
-        memcpy(_lastReceivedFrame, tempBuf, len);
-        _lastReceivedFrameLen = len;
-      }
-
+      bleuart.readBytes(dest, len);
       BLE_DEBUG_PRINTLN("readBytes: sz=%d, hdr=%d", len, (uint32_t) dest[0]);
       return len;
     }

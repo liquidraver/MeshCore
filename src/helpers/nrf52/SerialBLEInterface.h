@@ -22,17 +22,13 @@ class SerialBLEInterface : public BaseSerialInterface {
 
   #define FRAME_QUEUE_SIZE  4
   #define MAX_PENDING_WRITES 8  // Conservative limit based on configPrphConn hvn_qsize=16
-  #define MAX_FRAME_SIZE_DUP_CHECK 512  // Max size for duplicate detection
   int send_queue_len;
   Frame send_queue[FRAME_QUEUE_SIZE];
-  uint8_t _lastReceivedFrame[MAX_FRAME_SIZE_DUP_CHECK];  // Duplicate packet detection buffer
-  size_t _lastReceivedFrameLen;  // Length of last received frame
 
   void clearBuffers() {
     send_queue_len = 0;
     _pending_writes = 0;
     _last_tx_complete = millis();
-    _lastReceivedFrameLen = 0;  // Clear duplicate detection buffer
   }
   bool isConnectionHandleValid() const {
     return _connectionHandle != 0xFFFF;
@@ -52,7 +48,6 @@ public:
     _last_tx_complete = 0;
     send_queue_len = 0;
     _pending_writes = 0;
-    _lastReceivedFrameLen = 0;
   }
 
   void startAdv();
