@@ -4,14 +4,16 @@
 #include <bluefruit.h>
 
 #ifndef BLE_TX_POWER
-#define BLE_TX_POWER 4
+#define BLE_TX_POWER 0
 #endif
 
 class SerialBLEInterface : public BaseSerialInterface {
   BLEUart bleuart;
   bool _isEnabled;
   bool _isDeviceConnected;
-  unsigned long _last_write;
+  uint16_t _connectionHandle;  // Track specific connection handle
+  unsigned long _last_tx_complete;  // Track when we last received TX completion
+  uint8_t _pending_writes;  // Track pending BLE notifications in SoftDevice queue
 
   struct Frame {
     uint8_t len;
@@ -19,25 +21,44 @@ class SerialBLEInterface : public BaseSerialInterface {
   };
 
   #define FRAME_QUEUE_SIZE  4
+  #define MAX_PENDING_WRITES 8  // Conservative limit based on configPrphConn hvn_qsize=16
+  #define MAX_FRAME_SIZE_DUP_CHECK 512  // Max size for duplicate detection
   int send_queue_len;
   Frame send_queue[FRAME_QUEUE_SIZE];
+  uint8_t _lastReceivedFrame[MAX_FRAME_SIZE_DUP_CHECK];  // Duplicate packet detection buffer
+  size_t _lastReceivedFrameLen;  // Length of last received frame
 
-  void clearBuffers() { send_queue_len = 0; }
+  void clearBuffers() {
+    send_queue_len = 0;
+    _pending_writes = 0;
+    _last_tx_complete = millis();
+    _lastReceivedFrameLen = 0;  // Clear duplicate detection buffer
+  }
+  bool isConnectionHandleValid() const {
+    return _connectionHandle != 0xFFFF;
+  }
   static void onConnect(uint16_t connection_handle);
   static void onDisconnect(uint16_t connection_handle, uint8_t reason);
   static void onSecured(uint16_t connection_handle);
+  static bool onPairingPasskey(uint16_t connection_handle, uint8_t const passkey[6], bool match_request);
+  static void onPairingComplete(uint16_t connection_handle, uint8_t auth_status);
+  static void onBLEEvent(ble_evt_t* evt);  // Hook into SoftDevice events for TX completion
 
 public:
   SerialBLEInterface() {
     _isEnabled = false;
     _isDeviceConnected = false;
-    _last_write = 0;
+    _connectionHandle = 0xFFFF;  // BLE_CONN_HANDLE_INVALID (standard invalid handle value)
+    _last_tx_complete = 0;
     send_queue_len = 0;
+    _pending_writes = 0;
+    _lastReceivedFrameLen = 0;
   }
 
   void startAdv();
   void stopAdv();
   void begin(const char* device_name, uint32_t pin_code);
+  void disconnect();  // Disconnect and wait for completion
 
   // BaseSerialInterface methods
   void enable() override;
