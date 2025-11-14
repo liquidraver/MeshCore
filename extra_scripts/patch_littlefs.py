@@ -1,3 +1,11 @@
+"""
+LittleFS Patch Script
+
+This script updates the Adafruit nRF52 Arduino framework's LittleFS library
+from version 1.6 (used in Adafruit 1.7.0) to version 1.7.2.
+
+"""
+
 from pathlib import Path
 
 Import("env")  # pylint: disable=undefined-variable

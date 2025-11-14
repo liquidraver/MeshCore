@@ -1,3 +1,12 @@
+"""
+Bluefruit BLE Advertising Patch Script
+
+This script removes the unnecessary "stop first if current running" block from
+BLEAdvertising.cpp in the Adafruit nRF52 Arduino framework.
+SoftDevice v6 API's sd_ble_gap_adv_set_configure() is designed to update advertising data/parameters while advertising is active, so no need for unneccessary stops.
+
+"""
+
 from pathlib import Path
 
 Import("env")  # pylint: disable=undefined-variable
@@ -6,12 +15,9 @@ Import("env")  # pylint: disable=undefined-variable
 def _patch_ble_advertising(source: Path) -> None:
     text = source.read_text()
 
-    # Already patched?
     if "sd_ble_gap_adv_stop" not in text:
         return
 
-    # Remove the stop block - sd_ble_gap_adv_set_configure can update advertising
-    # while it's running, so stopping first is unnecessary and causes brief interruptions
     stop_block = (
         "  // stop first if current running since we may change advertising data/params\n"
         "  if (_running) {\n"
