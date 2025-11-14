@@ -1963,9 +1963,9 @@ int lfs_rename(lfs_t *lfs, const char *oldpath, const char *newpath) {
         err = lfs_dir_fetch(lfs, &dir, preventry.d.u.dir);
         if (err) {
             return err;
-          } else if (dir.d.size != sizeof(dir.d)+4) {
+        } else if (dir.d.size != sizeof(dir.d)+4) {
             return LFS_ERR_NOTEMPTY;
-          }
+        }
     }
 
     // move to new location
