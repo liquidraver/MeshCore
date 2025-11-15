@@ -1,5 +1,5 @@
 #include "SerialBLEInterface.h"
-#include <string.h> // For memcmp/memcpy
+#include <string.h> // For memcpy
 
 static SerialBLEInterface* instance;
 
@@ -102,9 +102,6 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
   // Register event callback to track TX completion events
   Bluefruit.setEventCallback(onBLEEvent);
 
-  // To be consistent OTA DFU should be added first if it exists
-  //bledfu.begin();
-
   // Configure and start the BLE Uart service
   bleuart.setPermission(SECMODE_ENC_WITH_MITM, SECMODE_ENC_WITH_MITM);
   bleuart.begin();
@@ -115,7 +112,6 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
   Bluefruit.Advertising.clearData();
   Bluefruit.ScanResponse.clearData();
 
-  // Advertising packet
   Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
   Bluefruit.Advertising.addTxPower();
 
@@ -135,9 +131,6 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
 }
 
 void SerialBLEInterface::startAdv() {
-  // Advertising is configured once in begin() - just start it if not already running
-  // Configure once, let SoftDevice handle restarts
-
   BLE_DEBUG_PRINTLN("SerialBLEInterface: starting advertising");
 
   if(Bluefruit.Advertising.isRunning()){
@@ -145,8 +138,6 @@ void SerialBLEInterface::startAdv() {
     return;
   }
 
-  // Start advertising (configuration already done in begin())
-  // restartOnDisconnect(true) is already set, so SoftDevice will auto-restart on disconnect
   Bluefruit.Advertising.start(0);  // 0 = Don't stop advertising after n seconds
 }
 
@@ -154,12 +145,11 @@ void SerialBLEInterface::stopAdv() {
 
   BLE_DEBUG_PRINTLN("SerialBLEInterface: stopping advertising");
   
-  // we only want to stop advertising if it's running, otherwise an invalid state error is logged by ble stack
+  // Only stop if running, otherwise an invalid state error is logged by BLE stack
   if(!Bluefruit.Advertising.isRunning()){
     return;
   }
 
-  // stop advertising
   Bluefruit.Advertising.stop();
 
 }
@@ -174,16 +164,12 @@ void SerialBLEInterface::enable() {
 
   // Re-enable auto-restart (in case disable() was called)
   Bluefruit.Advertising.restartOnDisconnect(true);
-
-  // Start advertising
   startAdv();
 }
 
 void SerialBLEInterface::disconnect() {
-  // Disconnect any BLE connections and wait for completion
   uint8_t connection_num = Bluefruit.connected();
   if (connection_num) {
-    // Close all connections
     for (uint8_t i = 0; i < connection_num; i++) {
       Bluefruit.disconnect(i);
     }
@@ -199,12 +185,10 @@ void SerialBLEInterface::disable() {
   _isEnabled = false;
   BLE_DEBUG_PRINTLN("SerialBLEInterface: disable");
 
-  // Disconnect and wait for completion
   disconnect();
 
-  // Stop advertising and disable auto-restart
   Bluefruit.Advertising.restartOnDisconnect(false);
-  stopAdv();  // Use stopAdv() which checks if already running
+  stopAdv();
   // Don't clear advertising data - it will be reconfigured on next begin()/enable()
 }
 
@@ -220,7 +204,7 @@ size_t SerialBLEInterface::writeFrame(const uint8_t src[], size_t len) {
       return 0;
     }
 
-    send_queue[send_queue_len].len = len;  // add to send queue
+    send_queue[send_queue_len].len = len;
     memcpy(send_queue[send_queue_len].buf, src, len);
     send_queue_len++;
 
@@ -235,31 +219,23 @@ bool SerialBLEInterface::isWriteBusy() const {
 }
 
 size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
-  // TX completion is now tracked via SoftDevice events in onBLEEvent()
-
-  if (send_queue_len > 0   // first, check send queue
-    && _pending_writes < MAX_PENDING_WRITES                 // don't overflow SoftDevice queue
-  ) {
-    // Check if notifications are enabled before writing (BLE stack may have disabled them)
-    // Use stored connection handle instead of Bluefruit.connHandle()
+  if (send_queue_len > 0 && _pending_writes < MAX_PENDING_WRITES) {
     if (isConnectionHandleValid() && bleuart.notifyEnabled(_connectionHandle)) {
       size_t written = bleuart.write(send_queue[0].buf, send_queue[0].len);
       if (written > 0) {
-        _pending_writes++;  // Track that we've sent a notification
+        _pending_writes++;
         BLE_DEBUG_PRINTLN("writeBytes: sz=%d, hdr=%d, pending=%d",
                          (uint32_t)send_queue[0].len, (uint32_t)send_queue[0].buf[0],
                          _pending_writes);
 
         send_queue_len--;
-        for (int i = 0; i < send_queue_len; i++) {   // delete top item from queue
+        for (int i = 0; i < send_queue_len; i++) {
           send_queue[i] = send_queue[i + 1];
         }
       } else {
-        // Write failed (likely queue full), will retry on next checkRecvFrame() call
         BLE_DEBUG_PRINTLN("writeBytes failed, pending=%d", _pending_writes);
       }
     }
-    // If notifications not enabled, will retry on next checkRecvFrame() call
   } else {
     int len = bleuart.available();
     if (len > 0 && len <= MAX_FRAME_SIZE) {
@@ -272,9 +248,7 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
 }
 
 bool SerialBLEInterface::isConnected() const {
-  // Check both our flag and actual BLE connection state
   if (!_isDeviceConnected) return false;
-  // Verify the stored connection handle is still valid
   if (isConnectionHandleValid()) {
     return Bluefruit.connected(_connectionHandle);
   }
