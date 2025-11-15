@@ -12,8 +12,9 @@ class SerialBLEInterface : public BaseSerialInterface {
   bool _isEnabled;
   bool _isDeviceConnected;
   uint16_t _connectionHandle;  // Track specific connection handle
-  unsigned long _last_tx_complete;  // Track when we last received TX completion
   uint8_t _pending_writes;  // Track pending BLE notifications in SoftDevice queue
+  bool _advRestartPending;  // Track if advertising restart is scheduled (iPhone crash prevention)
+  uint32_t _advRestartTime;  // Time when advertising should restart (iPhone crash prevention)
 
   struct Frame {
     uint8_t len;
@@ -28,7 +29,6 @@ class SerialBLEInterface : public BaseSerialInterface {
   void clearBuffers() {
     send_queue_len = 0;
     _pending_writes = 0;
-    _last_tx_complete = millis();
   }
   bool isConnectionHandleValid() const {
     return _connectionHandle != 0xFFFF;
@@ -45,9 +45,10 @@ public:
     _isEnabled = false;
     _isDeviceConnected = false;
     _connectionHandle = 0xFFFF;  // BLE_CONN_HANDLE_INVALID (standard invalid handle value)
-    _last_tx_complete = 0;
     send_queue_len = 0;
     _pending_writes = 0;
+    _advRestartPending = false;
+    _advRestartTime = 0;
   }
 
   void startAdv();

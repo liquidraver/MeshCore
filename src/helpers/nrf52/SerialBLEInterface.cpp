@@ -3,15 +3,12 @@
 
 static SerialBLEInterface* instance;
 
-#define  BLE_TX_COMPLETE_TIMEOUT  5000  // 5 seconds - reset counter if no TX completion events received
-
 void SerialBLEInterface::onConnect(uint16_t connection_handle) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: connected");
   if (instance) {
     instance->_connectionHandle = connection_handle;  // Store connection handle
     instance->_isDeviceConnected = false;
     instance->_pending_writes = 0;  // Reset pending writes on new connection
-    instance->_last_tx_complete = millis();  // Reset TX completion timestamp
   }
 }
 
@@ -21,7 +18,6 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
     instance->_isDeviceConnected = false;
     instance->_connectionHandle = 0xFFFF;  // Clear connection handle (BLE_CONN_HANDLE_INVALID)
     instance->_pending_writes = 0;  // Reset pending writes on disconnect
-    instance->_last_tx_complete = millis();  // Reset TX completion timestamp
     // Don't manually restart advertising - let restartOnDisconnect(true) handle it
     // This prevents conflicts with iOS rapid reconnection attempts
   }
@@ -46,11 +42,13 @@ bool SerialBLEInterface::onPairingPasskey(uint16_t connection_handle, uint8_t co
 
 void SerialBLEInterface::onPairingComplete(uint16_t connection_handle, uint8_t auth_status) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: pairing complete status=%d", auth_status);
-  (void)connection_handle;
   if (auth_status == BLE_GAP_SEC_STATUS_SUCCESS) {
     BLE_DEBUG_PRINTLN("SerialBLEInterface: pairing successful");
   } else {
-    BLE_DEBUG_PRINTLN("SerialBLEInterface: pairing failed");
+    BLE_DEBUG_PRINTLN("SerialBLEInterface: pairing failed, disconnecting");
+    if (instance && instance->isConnectionHandleValid()) {
+      Bluefruit.disconnect(connection_handle);
+    }
   }
 }
 
@@ -62,7 +60,6 @@ void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
     case BLE_GATTS_EVT_HVN_TX_COMPLETE:
       // Handle Value Notification transmission complete
       // Decrement pending writes counter by the number of completed transmissions
-      instance->_last_tx_complete = millis();  // Update timestamp on TX completion
       if (instance->_pending_writes > 0) {
         uint8_t completed = evt->evt.gatts_evt.params.hvn_tx_complete.count;
         if (instance->_pending_writes >= completed) {
@@ -239,15 +236,6 @@ bool SerialBLEInterface::isWriteBusy() const {
 
 size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
   // TX completion is now tracked via SoftDevice events in onBLEEvent()
-  // Add timeout safeguard for long-running connections to prevent counter drift
-
-  // If we have pending writes but haven't received TX completion in a long time,
-  // reset the counter to prevent it from getting stuck (safeguard for multi-day connections)
-  if (_pending_writes > 0 && millis() - _last_tx_complete > BLE_TX_COMPLETE_TIMEOUT) {
-    BLE_DEBUG_PRINTLN("TX completion timeout, resetting pending counter from %d", _pending_writes);
-    _pending_writes = 0;
-    _last_tx_complete = millis();
-  }
 
   if (send_queue_len > 0   // first, check send queue
     && _pending_writes < MAX_PENDING_WRITES                 // don't overflow SoftDevice queue
