@@ -12,7 +12,7 @@ class SerialBLEInterface : public BaseSerialInterface {
   bool _isEnabled;
   bool _isDeviceConnected;
   uint16_t _connectionHandle;  // Track specific connection handle
-  uint8_t _pending_writes;  // Track pending BLE notifications in SoftDevice queue
+  volatile uint8_t _pending_writes;  // Track pending BLE notifications in SoftDevice queue
   bool _advRestartPending;  // Track if advertising restart is scheduled (iPhone crash prevention)
   uint32_t _advRestartTime;  // Time when advertising should restart (iPhone crash prevention)
 
