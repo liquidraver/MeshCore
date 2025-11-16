@@ -68,6 +68,7 @@ void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
           instance->_pending_writes = 0;
         }
         BLE_DEBUG_PRINTLN("TX complete: %d, pending now: %d", completed, instance->_pending_writes);
+        instance->_write_fail_streak = 0;  // reset failure streak on successful completions
       }
       break;
     default:
@@ -219,6 +220,11 @@ bool SerialBLEInterface::isWriteBusy() const {
 }
 
 size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
+  // Backoff window: if we've recently seen repeated failures, pause sending
+  if (_ble_backoff_until && millis() < _ble_backoff_until) {
+    return 0;
+  }
+
   if (send_queue_len > 0 && _pending_writes < MAX_PENDING_WRITES) {
     if (isConnectionHandleValid() && bleuart.notifyEnabled(_connectionHandle)) {
       size_t written = bleuart.write(send_queue[0].buf, send_queue[0].len);
@@ -232,8 +238,22 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
         for (int i = 0; i < send_queue_len; i++) {
           send_queue[i] = send_queue[i + 1];
         }
+        // Successful write: reset failure streak
+        _write_fail_streak = 0;
       } else {
-        BLE_DEBUG_PRINTLN("writeBytes failed, pending=%d", _pending_writes);
+        // Write failed (likely SoftDevice queue full). Track consecutive failures
+        _write_fail_streak++;
+        BLE_DEBUG_PRINTLN("writeBytes failed, pending=%d, streak=%d",
+                          _pending_writes, _write_fail_streak);
+
+        // If we see a burst of failures, enter a short backoff window
+        const uint8_t BLE_WRITE_FAIL_STREAK_LIMIT = 4;   // tuneable
+        const uint32_t BLE_WRITE_BACKOFF_MS = 300;       // tuneable
+        if (_write_fail_streak >= BLE_WRITE_FAIL_STREAK_LIMIT) {
+          _ble_backoff_until = millis() + BLE_WRITE_BACKOFF_MS;
+          _write_fail_streak = 0;
+          BLE_DEBUG_PRINTLN("BLE write backoff for %d ms", (uint32_t)BLE_WRITE_BACKOFF_MS);
+        }
       }
     }
   } else {
