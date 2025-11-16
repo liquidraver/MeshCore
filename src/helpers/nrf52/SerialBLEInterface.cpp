@@ -17,7 +17,11 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
   if(instance){
     instance->_isDeviceConnected = false;
     instance->_connectionHandle = 0xFFFF;  // Clear connection handle (BLE_CONN_HANDLE_INVALID)
-    instance->_pending_writes = 0;  // Reset pending writes on disconnect
+    instance->_pending_writes = 0;   // Reset pending writes on disconnect
+
+    // Aggressively drop any queued frames so the next connection starts clean
+    instance->send_queue_len = 0;
+
     // Don't manually restart advertising - let restartOnDisconnect(true) handle it
     // This prevents conflicts with iOS rapid reconnection attempts
   }
