@@ -1738,12 +1738,22 @@ void MyMesh::checkCLIRescueCmd() {
 }
 
 void MyMesh::checkSerialInterface() {
+  // 1) Always process incoming data first
   size_t len = _serial->checkRecvFrame(cmd_frame);
   if (len > 0) {
     handleCmdFrame(len);
-  } else if (_iter_started              // check if our ContactsIterator is 'running'
-             && !_serial->isWriteBusy() // don't spam the Serial Interface too quickly!
-  ) {
+    return;
+  }
+
+  // 2) No incoming data: don't push anything if BLE is already busy
+  if (_serial->isWriteBusy()) {
+    // BLE pipe is congested; don't add more frames this loop
+    return;
+  }
+
+  // 3) If there's an active contacts iterator and BLE is not busy,
+  //    advance it by at most one contact per call
+  if (_iter_started) {
     ContactInfo contact;
     if (_iter.hasNext(this, contact)) {
       if (contact.lastmod > _iter_filter_since) { // apply the 'since' filter
@@ -1752,6 +1762,8 @@ void MyMesh::checkSerialInterface() {
           _most_recent_lastmod = contact.lastmod; // save for the RESP_CODE_END_OF_CONTACTS frame
         }
       }
+      // Intentionally only one contact per call; next loop iteration
+      // will send more only if BLE is still not busy.
     } else { // EOF
       out_frame[0] = RESP_CODE_END_OF_CONTACTS;
       memcpy(&out_frame[1], &_most_recent_lastmod,
@@ -1759,8 +1771,6 @@ void MyMesh::checkSerialInterface() {
       _serial->writeFrame(out_frame, 5);
       _iter_started = false;
     }
-  //} else if (!_serial->isWriteBusy()) {
-  //  checkConnections();    // TODO - deprecate the 'Connections' stuff
   }
 }
 
