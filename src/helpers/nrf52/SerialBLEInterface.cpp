@@ -88,7 +88,11 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
 
   // Configure, begin, then clear advertising
   Bluefruit.autoConnLed(false);  // Disable connection LED
-  Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
+  // Set MTU to match MAX_FRAME_SIZE to avoid wasting bandwidth (ESP32 does the same)
+  // Use default values for event_length and queue sizes to avoid congestion issues
+  Bluefruit.configPrphConn(MAX_FRAME_SIZE, BLE_GAP_EVENT_LENGTH_DEFAULT, 
+                           BLE_GATTS_HVN_TX_QUEUE_SIZE_DEFAULT, 
+                           BLE_GATTC_WRITE_CMD_TX_QUEUE_SIZE_DEFAULT);
   Bluefruit.begin();  // Begin before clearing advertising
   Bluefruit.setTxPower(BLE_TX_POWER);
   Bluefruit.setName(device_name);
