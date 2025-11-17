@@ -103,7 +103,7 @@ void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
       }
       break;
 
-    case BLE_GAP_EVT_CONN_PARAM_UPDATE_REQUEST:
+    case BLE_GAP_EVT_CONN_PARAM_UPDATE_REQUEST: {
       // iOS 13+ sends this - we MUST respond or SoftDevice will assert/crash
       BLE_DEBUG_PRINTLN("CONN_PARAM_UPDATE_REQUEST: handle=0x%04X, min_interval=%d, max_interval=%d, latency=%d, timeout=%d",
                        conn_handle,
@@ -128,6 +128,7 @@ void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
         BLE_DEBUG_PRINTLN("ERROR: Failed to accept CONN_PARAM_UPDATE_REQUEST: 0x%08X", err_code);
       }
       break;
+    }
 
     case BLE_GAP_EVT_CONN_PARAM_UPDATE:
       // Connection parameters were updated
@@ -139,7 +140,7 @@ void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
                        evt->evt.gap_evt.params.conn_param_update.conn_params.conn_sup_timeout);
       break;
 
-    case BLE_GAP_EVT_PHY_UPDATE_REQUEST:
+    case BLE_GAP_EVT_PHY_UPDATE_REQUEST: {
       // iOS 13+ may request PHY changes (1M/2M/Coded)
       BLE_DEBUG_PRINTLN("PHY_UPDATE_REQUEST: handle=0x%04X, tx_phys=0x%02X, rx_phys=0x%02X",
                        conn_handle,
@@ -155,13 +156,14 @@ void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
       
       // Accept iOS's PHY preferences (use AUTO to let SoftDevice choose best)
       ble_gap_phys_t phy_params = { BLE_GAP_PHY_AUTO, BLE_GAP_PHY_AUTO };
-      err_code = sd_ble_gap_phy_update(conn_handle, &phy_params);
+      uint32_t err_code = sd_ble_gap_phy_update(conn_handle, &phy_params);
       if (err_code == NRF_SUCCESS) {
         BLE_DEBUG_PRINTLN("Accepted PHY_UPDATE_REQUEST (AUTO)");
       } else {
         BLE_DEBUG_PRINTLN("ERROR: Failed to accept PHY_UPDATE_REQUEST: 0x%08X", err_code);
       }
       break;
+    }
 
     case BLE_GAP_EVT_PHY_UPDATE:
       // PHY update completed
@@ -172,14 +174,14 @@ void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
                        evt->evt.gap_evt.params.phy_update.rx_phy);
       break;
 
-    case BLE_GAP_EVT_DATA_LENGTH_UPDATE_REQUEST:
+    case BLE_GAP_EVT_DATA_LENGTH_UPDATE_REQUEST: {
       // iOS 13+ may request data length changes
-      BLE_DEBUG_PRINTLN("DATA_LENGTH_UPDATE_REQUEST: handle=0x%04X, max_tx_octets=%d, max_tx_time=%d, max_rx_octets=%d, max_rx_time=%d",
+      BLE_DEBUG_PRINTLN("DATA_LENGTH_UPDATE_REQUEST: handle=0x%04X, max_tx_octets=%d, max_tx_time_us=%d, max_rx_octets=%d, max_rx_time_us=%d",
                        conn_handle,
                        evt->evt.gap_evt.params.data_length_update_request.peer_params.max_tx_octets,
-                       evt->evt.gap_evt.params.data_length_update_request.peer_params.max_tx_time,
+                       evt->evt.gap_evt.params.data_length_update_request.peer_params.max_tx_time_us,
                        evt->evt.gap_evt.params.data_length_update_request.peer_params.max_rx_octets,
-                       evt->evt.gap_evt.params.data_length_update_request.peer_params.max_rx_time);
+                       evt->evt.gap_evt.params.data_length_update_request.peer_params.max_rx_time_us);
       
       // Validate connection handle
       if (!instance->isConnectionHandleValid() || instance->_connectionHandle != conn_handle) {
@@ -189,22 +191,23 @@ void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
       }
       
       // Accept iOS's data length preferences (use AUTO to let SoftDevice choose best)
-      err_code = sd_ble_gap_data_length_update(conn_handle, NULL, NULL);
+      uint32_t err_code = sd_ble_gap_data_length_update(conn_handle, NULL, NULL);
       if (err_code == NRF_SUCCESS) {
         BLE_DEBUG_PRINTLN("Accepted DATA_LENGTH_UPDATE_REQUEST (AUTO)");
       } else {
         BLE_DEBUG_PRINTLN("ERROR: Failed to accept DATA_LENGTH_UPDATE_REQUEST: 0x%08X", err_code);
       }
       break;
+    }
 
     case BLE_GAP_EVT_DATA_LENGTH_UPDATE:
       // Data length update completed
-      BLE_DEBUG_PRINTLN("DATA_LENGTH_UPDATE: handle=0x%04X, max_tx_octets=%d, max_tx_time=%d, max_rx_octets=%d, max_rx_time=%d",
+      BLE_DEBUG_PRINTLN("DATA_LENGTH_UPDATE: handle=0x%04X, max_tx_octets=%d, max_tx_time_us=%d, max_rx_octets=%d, max_rx_time_us=%d",
                        conn_handle,
                        evt->evt.gap_evt.params.data_length_update.effective_params.max_tx_octets,
-                       evt->evt.gap_evt.params.data_length_update.effective_params.max_tx_time,
+                       evt->evt.gap_evt.params.data_length_update.effective_params.max_tx_time_us,
                        evt->evt.gap_evt.params.data_length_update.effective_params.max_rx_octets,
-                       evt->evt.gap_evt.params.data_length_update.effective_params.max_rx_time);
+                       evt->evt.gap_evt.params.data_length_update.effective_params.max_rx_time_us);
       break;
 
     case BLE_GAP_EVT_TIMEOUT:
