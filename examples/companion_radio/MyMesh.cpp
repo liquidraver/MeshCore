@@ -808,6 +808,11 @@ void MyMesh::startInterface(BaseSerialInterface &serial) {
 }
 
 void MyMesh::handleCmdFrame(size_t len) {
+  // Only process commands if connection is fully secured
+  if (!_serial->isConnected()) {
+    return;
+  }
+
   if (cmd_frame[0] == CMD_DEVICE_QEURY && len >= 2) { // sent when app establishes connection
     app_target_ver = cmd_frame[1];                    // which version of protocol does app understand
 
@@ -1745,13 +1750,19 @@ void MyMesh::checkSerialInterface() {
     return;
   }
 
-  // 2) No incoming data: don't push anything if BLE is already busy
+  // 2) If connection is lost, clear iterator state to prevent stale sync
+  if (_iter_started && !_serial->isConnected()) {
+    _iter_started = false;
+    return;
+  }
+
+  // 3) No incoming data: don't push anything if BLE is already busy
   if (_serial->isWriteBusy()) {
     // BLE pipe is congested; don't add more frames this loop
     return;
   }
 
-  // 3) If there's an active contacts iterator and BLE is not busy,
+  // 4) If there's an active contacts iterator and BLE is not busy,
   //    advance it by at most one contact per call
   if (_iter_started) {
     ContactInfo contact;

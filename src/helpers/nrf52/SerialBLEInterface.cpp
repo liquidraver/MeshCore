@@ -224,7 +224,7 @@ bool SerialBLEInterface::isWriteBusy() const {
 
 size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
   if (send_queue_len > 0 && _pending_writes < MAX_PENDING_WRITES) {
-    if (isConnectionHandleValid() && bleuart.notifyEnabled(_connectionHandle)) {
+    if (_isDeviceConnected && isConnectionHandleValid() && bleuart.notifyEnabled(_connectionHandle)) {
       size_t written = bleuart.write(send_queue[0].buf, send_queue[0].len);
       if (written > 0) {
         _pending_writes++;
@@ -241,11 +241,14 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
       }
     }
   } else {
-    int len = bleuart.available();
-    if (len > 0 && len <= MAX_FRAME_SIZE) {
-      bleuart.readBytes(dest, len);
-      BLE_DEBUG_PRINTLN("readBytes: sz=%d, hdr=%d", len, (uint32_t) dest[0]);
-      return len;
+    // Only process incoming data if connection is fully secured
+    if (_isDeviceConnected) {
+      int len = bleuart.available();
+      if (len > 0 && len <= MAX_FRAME_SIZE) {
+        bleuart.readBytes(dest, len);
+        BLE_DEBUG_PRINTLN("readBytes: sz=%d, hdr=%d", len, (uint32_t) dest[0]);
+        return len;
+      }
     }
   }
   return 0;
