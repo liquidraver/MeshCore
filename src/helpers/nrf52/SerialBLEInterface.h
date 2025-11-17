@@ -22,7 +22,7 @@ class SerialBLEInterface : public BaseSerialInterface {
   };
 
   #define FRAME_QUEUE_SIZE  4
-  #define MAX_PENDING_WRITES 8  // Conservative limit based on configPrphConn hvn_qsize=16
+  #define MAX_PENDING_WRITES 8  // Bernoulli’s principle - we want to be ready when softdevice queue is drained - TURBO MODE
   int send_queue_len;
   Frame send_queue[FRAME_QUEUE_SIZE];
 
