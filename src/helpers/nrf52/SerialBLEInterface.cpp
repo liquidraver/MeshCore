@@ -89,7 +89,6 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
   // Configure, begin, then clear advertising
   Bluefruit.autoConnLed(false);  // Disable connection LED
   Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
-  Bluefruit.configPrphConn(250, BLE_GAP_EVENT_LENGTH_MIN, 16, 16);  // increase MTU
   Bluefruit.begin();  // Begin before clearing advertising
   Bluefruit.setTxPower(BLE_TX_POWER);
   Bluefruit.setName(device_name);
@@ -225,7 +224,7 @@ bool SerialBLEInterface::isWriteBusy() const {
 
 size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
   if (send_queue_len > 0 && _pending_writes < MAX_PENDING_WRITES) {
-    if (_isDeviceConnected && isConnectionHandleValid() && bleuart.notifyEnabled(_connectionHandle)) {
+    if (isConnectionHandleValid() && bleuart.notifyEnabled(_connectionHandle)) {
       size_t written = bleuart.write(send_queue[0].buf, send_queue[0].len);
       if (written > 0) {
         _pending_writes++;
@@ -242,14 +241,11 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
       }
     }
   } else {
-    // Only process incoming data if connection is fully secured
-    if (_isDeviceConnected) {
-      int len = bleuart.available();
-      if (len > 0 && len <= MAX_FRAME_SIZE) {
-        bleuart.readBytes(dest, len);
-        BLE_DEBUG_PRINTLN("readBytes: sz=%d, hdr=%d", len, (uint32_t) dest[0]);
-        return len;
-      }
+    int len = bleuart.available();
+    if (len > 0 && len <= MAX_FRAME_SIZE) {
+      bleuart.readBytes(dest, len);
+      BLE_DEBUG_PRINTLN("readBytes: sz=%d, hdr=%d", len, (uint32_t) dest[0]);
+      return len;
     }
   }
   return 0;
