@@ -1,20 +1,34 @@
 #include "SerialBLEInterface.h"
 #include <string.h> // For memcpy
+#include "ble_gap.h"  // For SoftDevice GAP functions (sd_ble_gap_*)
 
 static SerialBLEInterface* instance;
 
 void SerialBLEInterface::onConnect(uint16_t connection_handle) {
-  BLE_DEBUG_PRINTLN("SerialBLEInterface: connected");
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: connected handle=0x%04X", connection_handle);
   if (instance) {
+    // Defensive: If already connected with a different handle, disconnect the old one
+    if (instance->isConnectionHandleValid() && instance->_connectionHandle != connection_handle) {
+      BLE_DEBUG_PRINTLN("WARN: New connection with different handle! Old=0x%04X, New=0x%04X", 
+                       instance->_connectionHandle, connection_handle);
+      Bluefruit.disconnect(instance->_connectionHandle);
+    }
     instance->_connectionHandle = connection_handle;  // Store connection handle
     instance->_isDeviceConnected = false;
     instance->_pending_writes = 0;  // Reset pending writes on new connection
+    instance->clearBuffers();  // Clear any stale queued frames
   }
 }
 
 void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason) {
-  BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected reason=%d", reason);
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected handle=0x%04X reason=%d", connection_handle, reason);
   if(instance){
+    // Only process disconnect if it matches our stored handle (defensive check)
+    if (instance->isConnectionHandleValid() && instance->_connectionHandle != connection_handle) {
+      BLE_DEBUG_PRINTLN("WARN: Disconnect event for wrong handle! Stored=0x%04X, Event=0x%04X", 
+                       instance->_connectionHandle, connection_handle);
+      return;
+    }
     instance->_isDeviceConnected = false;
     instance->_connectionHandle = 0xFFFF;  // Clear connection handle (BLE_CONN_HANDLE_INVALID)
     instance->_pending_writes = 0;   // Reset pending writes on disconnect
@@ -28,8 +42,14 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
 }
 
 void SerialBLEInterface::onSecured(uint16_t connection_handle) {
-  BLE_DEBUG_PRINTLN("SerialBLEInterface: onSecured");
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: onSecured handle=0x%04X", connection_handle);
   if(instance){
+    // Validate connection handle matches
+    if (!instance->isConnectionHandleValid() || instance->_connectionHandle != connection_handle) {
+      BLE_DEBUG_PRINTLN("WARN: onSecured with mismatched handle! Stored=0x%04X, Event=0x%04X", 
+                       instance->_connectionHandle, connection_handle);
+      return;
+    }
     // Connection handle already set in onConnect(), no need to set again
     instance->_isDeviceConnected = true;
     // no need to stop advertising on connect, as the ble stack does this automatically
@@ -57,8 +77,16 @@ void SerialBLEInterface::onPairingComplete(uint16_t connection_handle, uint8_t a
 }
 
 void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
-  // Hook into SoftDevice events to track TX completion
+  // Hook into SoftDevice events to track TX completion and handle iOS 13+ requests
   if (!instance) return;
+
+  // Extract connection handle based on event type
+  uint16_t conn_handle = 0xFFFF;
+  if (evt->header.evt_id >= BLE_GAP_EVT_BASE && evt->header.evt_id <= BLE_GAP_EVT_LAST) {
+    conn_handle = evt->evt.gap_evt.conn_handle;
+  } else if (evt->header.evt_id >= BLE_GATTS_EVT_BASE && evt->header.evt_id <= BLE_GATTS_EVT_LAST) {
+    conn_handle = evt->evt.gatts_evt.conn_handle;
+  }
 
   switch(evt->header.evt_id) {
     case BLE_GATTS_EVT_HVN_TX_COMPLETE:
@@ -74,7 +102,132 @@ void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
         BLE_DEBUG_PRINTLN("TX complete: %d, pending now: %d", completed, instance->_pending_writes);
       }
       break;
+
+    case BLE_GAP_EVT_CONN_PARAM_UPDATE_REQUEST:
+      // iOS 13+ sends this - we MUST respond or SoftDevice will assert/crash
+      BLE_DEBUG_PRINTLN("CONN_PARAM_UPDATE_REQUEST: handle=0x%04X, min_interval=%d, max_interval=%d, latency=%d, timeout=%d",
+                       conn_handle,
+                       evt->evt.gap_evt.params.conn_param_update_request.conn_params.min_conn_interval,
+                       evt->evt.gap_evt.params.conn_param_update_request.conn_params.max_conn_interval,
+                       evt->evt.gap_evt.params.conn_param_update_request.conn_params.slave_latency,
+                       evt->evt.gap_evt.params.conn_param_update_request.conn_params.conn_sup_timeout);
+      
+      // Validate connection handle
+      if (!instance->isConnectionHandleValid() || instance->_connectionHandle != conn_handle) {
+        BLE_DEBUG_PRINTLN("WARN: CONN_PARAM_UPDATE_REQUEST with mismatched handle! Stored=0x%04X, Event=0x%04X",
+                         instance->_connectionHandle, conn_handle);
+        return;
+      }
+      
+      // Accept iOS's requested parameters by calling with NULL (uses PPCP from GAP service)
+      // Alternatively, we could use the requested parameters directly
+      uint32_t err_code = sd_ble_gap_conn_param_update(conn_handle, NULL);
+      if (err_code == NRF_SUCCESS) {
+        BLE_DEBUG_PRINTLN("Accepted CONN_PARAM_UPDATE_REQUEST (using PPCP)");
+      } else {
+        BLE_DEBUG_PRINTLN("ERROR: Failed to accept CONN_PARAM_UPDATE_REQUEST: 0x%08X", err_code);
+      }
+      break;
+
+    case BLE_GAP_EVT_CONN_PARAM_UPDATE:
+      // Connection parameters were updated
+      BLE_DEBUG_PRINTLN("CONN_PARAM_UPDATE: handle=0x%04X, min_interval=%d, max_interval=%d, latency=%d, timeout=%d",
+                       conn_handle,
+                       evt->evt.gap_evt.params.conn_param_update.conn_params.min_conn_interval,
+                       evt->evt.gap_evt.params.conn_param_update.conn_params.max_conn_interval,
+                       evt->evt.gap_evt.params.conn_param_update.conn_params.slave_latency,
+                       evt->evt.gap_evt.params.conn_param_update.conn_params.conn_sup_timeout);
+      break;
+
+    case BLE_GAP_EVT_PHY_UPDATE_REQUEST:
+      // iOS 13+ may request PHY changes (1M/2M/Coded)
+      BLE_DEBUG_PRINTLN("PHY_UPDATE_REQUEST: handle=0x%04X, tx_phys=0x%02X, rx_phys=0x%02X",
+                       conn_handle,
+                       evt->evt.gap_evt.params.phy_update_request.peer_preferred_phys.tx_phys,
+                       evt->evt.gap_evt.params.phy_update_request.peer_preferred_phys.rx_phys);
+      
+      // Validate connection handle
+      if (!instance->isConnectionHandleValid() || instance->_connectionHandle != conn_handle) {
+        BLE_DEBUG_PRINTLN("WARN: PHY_UPDATE_REQUEST with mismatched handle! Stored=0x%04X, Event=0x%04X",
+                         instance->_connectionHandle, conn_handle);
+        return;
+      }
+      
+      // Accept iOS's PHY preferences (use AUTO to let SoftDevice choose best)
+      ble_gap_phys_t phy_params = { BLE_GAP_PHY_AUTO, BLE_GAP_PHY_AUTO };
+      err_code = sd_ble_gap_phy_update(conn_handle, &phy_params);
+      if (err_code == NRF_SUCCESS) {
+        BLE_DEBUG_PRINTLN("Accepted PHY_UPDATE_REQUEST (AUTO)");
+      } else {
+        BLE_DEBUG_PRINTLN("ERROR: Failed to accept PHY_UPDATE_REQUEST: 0x%08X", err_code);
+      }
+      break;
+
+    case BLE_GAP_EVT_PHY_UPDATE:
+      // PHY update completed
+      BLE_DEBUG_PRINTLN("PHY_UPDATE: handle=0x%04X, status=0x%02X, tx_phy=0x%02X, rx_phy=0x%02X",
+                       conn_handle,
+                       evt->evt.gap_evt.params.phy_update.status,
+                       evt->evt.gap_evt.params.phy_update.tx_phy,
+                       evt->evt.gap_evt.params.phy_update.rx_phy);
+      break;
+
+    case BLE_GAP_EVT_DATA_LENGTH_UPDATE_REQUEST:
+      // iOS 13+ may request data length changes
+      BLE_DEBUG_PRINTLN("DATA_LENGTH_UPDATE_REQUEST: handle=0x%04X, max_tx_octets=%d, max_tx_time=%d, max_rx_octets=%d, max_rx_time=%d",
+                       conn_handle,
+                       evt->evt.gap_evt.params.data_length_update_request.peer_params.max_tx_octets,
+                       evt->evt.gap_evt.params.data_length_update_request.peer_params.max_tx_time,
+                       evt->evt.gap_evt.params.data_length_update_request.peer_params.max_rx_octets,
+                       evt->evt.gap_evt.params.data_length_update_request.peer_params.max_rx_time);
+      
+      // Validate connection handle
+      if (!instance->isConnectionHandleValid() || instance->_connectionHandle != conn_handle) {
+        BLE_DEBUG_PRINTLN("WARN: DATA_LENGTH_UPDATE_REQUEST with mismatched handle! Stored=0x%04X, Event=0x%04X",
+                         instance->_connectionHandle, conn_handle);
+        return;
+      }
+      
+      // Accept iOS's data length preferences (use AUTO to let SoftDevice choose best)
+      err_code = sd_ble_gap_data_length_update(conn_handle, NULL, NULL);
+      if (err_code == NRF_SUCCESS) {
+        BLE_DEBUG_PRINTLN("Accepted DATA_LENGTH_UPDATE_REQUEST (AUTO)");
+      } else {
+        BLE_DEBUG_PRINTLN("ERROR: Failed to accept DATA_LENGTH_UPDATE_REQUEST: 0x%08X", err_code);
+      }
+      break;
+
+    case BLE_GAP_EVT_DATA_LENGTH_UPDATE:
+      // Data length update completed
+      BLE_DEBUG_PRINTLN("DATA_LENGTH_UPDATE: handle=0x%04X, max_tx_octets=%d, max_tx_time=%d, max_rx_octets=%d, max_rx_time=%d",
+                       conn_handle,
+                       evt->evt.gap_evt.params.data_length_update.effective_params.max_tx_octets,
+                       evt->evt.gap_evt.params.data_length_update.effective_params.max_tx_time,
+                       evt->evt.gap_evt.params.data_length_update.effective_params.max_rx_octets,
+                       evt->evt.gap_evt.params.data_length_update.effective_params.max_rx_time);
+      break;
+
+    case BLE_GAP_EVT_TIMEOUT:
+      // Connection timeout
+      BLE_DEBUG_PRINTLN("GAP_TIMEOUT: handle=0x%04X, src=0x%02X",
+                       conn_handle,
+                       evt->evt.gap_evt.params.timeout.src);
+      break;
+
+    case BLE_GATTS_EVT_TIMEOUT:
+      // ATT timeout (peer didn't respond)
+      BLE_DEBUG_PRINTLN("GATTS_TIMEOUT: handle=0x%04X, src=0x%02X",
+                       conn_handle,
+                       evt->evt.gatts_evt.params.timeout.src);
+      break;
+
     default:
+      // Log unhandled events for debugging (only in debug mode to avoid spam)
+      #ifdef BLE_DEBUG_LOGGING
+      if (evt->header.evt_id >= BLE_GAP_EVT_BASE && evt->header.evt_id <= BLE_GAP_EVT_LAST) {
+        BLE_DEBUG_PRINTLN("Unhandled GAP event: 0x%02X handle=0x%04X", evt->header.evt_id, conn_handle);
+      }
+      #endif
       break;
   }
 }
