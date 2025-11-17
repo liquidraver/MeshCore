@@ -88,11 +88,7 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
 
   // Configure, begin, then clear advertising
   Bluefruit.autoConnLed(false);  // Disable connection LED
-  // Set MTU to match MAX_FRAME_SIZE to avoid wasting bandwidth (ESP32 does the same)
-  // Use default values for event_length and queue sizes to avoid congestion issues
-  Bluefruit.configPrphConn(MAX_FRAME_SIZE, BLE_GAP_EVENT_LENGTH_DEFAULT, 
-                           BLE_GATTS_HVN_TX_QUEUE_SIZE_DEFAULT, 
-                           BLE_GATTC_WRITE_CMD_TX_QUEUE_SIZE_DEFAULT);
+  Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
   Bluefruit.begin();  // Begin before clearing advertising
   Bluefruit.setTxPower(BLE_TX_POWER);
   Bluefruit.setName(device_name);
@@ -252,17 +248,17 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
         // Cap read to avoid overflowing caller's buffer (MAX_FRAME_SIZE)
         int got = bleuart.readBytes(dest, avail > MAX_FRAME_SIZE ? MAX_FRAME_SIZE : avail);
 
-        // If more data is pending, drain a limited amount to prevent buffer blocking
-        // Limit draining to avoid blocking TX path during contact sync
+        // If more data is pending, drain the excess to prevent buffer blocking
         if (avail > MAX_FRAME_SIZE) {
-          uint8_t discard[64];
-          int to_drain = avail - got;
-          // Limit draining to 64 bytes per call to avoid blocking TX
-          if (to_drain > 64) to_drain = 64;
-          int drained = bleuart.readBytes(discard, to_drain);
-          if (drained > 0) {
-            BLE_DEBUG_PRINTLN("WARN: BLE RX overflow: avail=%d, read=%d, drained=%d (limited)", avail, got, drained);
+          uint8_t discard[32];
+          int remaining = avail - got;
+          while (remaining > 0) {
+            int chunk = remaining < (int)sizeof(discard) ? remaining : (int)sizeof(discard);
+            int drained = bleuart.readBytes(discard, chunk);
+            if (drained <= 0) break;
+            remaining -= drained;
           }
+          BLE_DEBUG_PRINTLN("WARN: BLE RX overflow: avail=%d, read=%d, drained=%d", avail, got, avail - got - remaining);
         }
 
         BLE_DEBUG_PRINTLN("readBytes: sz=%d, hdr=%d", got, (uint32_t) dest[0]);
