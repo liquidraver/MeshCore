@@ -11,10 +11,10 @@ class SerialBLEInterface : public BaseSerialInterface {
   BLEUart bleuart;
   bool _isEnabled;
   bool _isDeviceConnected;
-  uint16_t _connectionHandle;  // Track specific connection handle
-  volatile uint8_t _pending_writes;  // Track pending BLE notifications in SoftDevice queue
-  bool _advRestartPending;  // Track if advertising restart is scheduled (iPhone crash prevention)
-  uint32_t _advRestartTime;  // Time when advertising should restart (iPhone crash prevention)
+  uint16_t _connectionHandle;
+  volatile uint8_t _pending_writes;
+  bool _advRestartPending;
+  uint32_t _advRestartTime;
 
   struct Frame {
     uint8_t len;
@@ -22,7 +22,7 @@ class SerialBLEInterface : public BaseSerialInterface {
   };
 
   #define FRAME_QUEUE_SIZE  4
-  #define MAX_PENDING_WRITES 8  // Bernoulli’s principle - we want to be ready when softdevice queue is drained - TURBO MODE
+  #define MAX_PENDING_WRITES 8
   int send_queue_len;
   Frame send_queue[FRAME_QUEUE_SIZE];
 
@@ -38,13 +38,13 @@ class SerialBLEInterface : public BaseSerialInterface {
   static void onSecured(uint16_t connection_handle);
   static bool onPairingPasskey(uint16_t connection_handle, uint8_t const passkey[6], bool match_request);
   static void onPairingComplete(uint16_t connection_handle, uint8_t auth_status);
-  static void onBLEEvent(ble_evt_t* evt);  // Hook into SoftDevice events for TX completion
+  static void onBLEEvent(ble_evt_t* evt);
 
 public:
   SerialBLEInterface() {
     _isEnabled = false;
     _isDeviceConnected = false;
-    _connectionHandle = 0xFFFF;  // BLE_CONN_HANDLE_INVALID (standard invalid handle value)
+    _connectionHandle = 0xFFFF;
     send_queue_len = 0;
     _pending_writes = 0;
     _advRestartPending = false;
@@ -54,9 +54,8 @@ public:
   void startAdv();
   void stopAdv();
   void begin(const char* device_name, uint32_t pin_code);
-  void disconnect();  // Disconnect and wait for completion
+  void disconnect();
 
-  // BaseSerialInterface methods
   void enable() override;
   void disable() override;
   bool isEnabled() const override { return _isEnabled; }
