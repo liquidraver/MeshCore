@@ -4,6 +4,7 @@
 #include <Mesh.h>
 #include "AbstractUITask.h"
 
+/*------------ Frame Protocol --------------*/
 #define FIRMWARE_VER_CODE 8
 
 #ifndef FIRMWARE_BUILD_DATE
@@ -32,6 +33,8 @@
 #include <helpers/SimpleMeshTables.h>
 #include <helpers/StaticPoolPacketManager.h>
 #include <target.h>
+
+/* ---------------------------------- CONFIGURATION ------------------------------------- */
 
 #ifndef LORA_FREQ
 #define LORA_FREQ 915.0
@@ -67,7 +70,9 @@
 #include <helpers/BaseChatMesh.h>
 #include <helpers/TransportKeyStore.h>
 
-#define REQ_TYPE_GET_STATUS             0x01
+/* -------------------------------------------------------------------------------------- */
+
+#define REQ_TYPE_GET_STATUS             0x01 // same as _GET_STATS
 #define REQ_TYPE_KEEP_ALIVE             0x02
 #define REQ_TYPE_GET_TELEMETRY_DATA     0x03
 
@@ -137,6 +142,7 @@ protected:
   uint32_t calcDirectTimeoutMillisFor(uint32_t pkt_airtime_millis, uint8_t path_len) const override;
   void onSendTimeout() override;
 
+  // DataStoreHost methods
   bool onContactLoaded(const ContactInfo& contact) override { return addContact(contact); }
   bool getContactForSave(uint32_t idx, ContactInfo& contact) override { return getContactByIdx(idx, contact); }
   bool onChannelLoaded(uint8_t channel_idx, const ChannelDetails& ch) override { return setChannel(channel_idx, ch); }
@@ -164,6 +170,7 @@ private:
   void checkCLIRescueCmd();
   void checkSerialInterface();
 
+  // helpers, short-cuts
   void savePrefs() { _store->savePrefs(_prefs, sensors.node_lat, sensors.node_lon); }
   void saveChannels() { _store->saveChannels(this); }
   void saveContacts() { _store->saveContacts(this); }
@@ -173,8 +180,8 @@ private:
   NodePrefs _prefs;
   uint32_t pending_login;
   uint32_t pending_status;
-  uint32_t pending_telemetry, pending_discovery;
-  uint32_t pending_req;
+  uint32_t pending_telemetry, pending_discovery;   // pending _TELEMETRY_REQ
+  uint32_t pending_req;   // pending _BINARY_REQ
   BaseSerialInterface *_serial;
   AbstractUITask* _ui;
 
@@ -211,11 +218,11 @@ private:
     ContactInfo* contact;
   };
   #define EXPECTED_ACK_TABLE_SIZE 8
-  AckTableEntry expected_ack_table[EXPECTED_ACK_TABLE_SIZE];
+  AckTableEntry expected_ack_table[EXPECTED_ACK_TABLE_SIZE]; // circular table
   int next_ack_idx;
 
   #define ADVERT_PATH_TABLE_SIZE   16
-  AdvertPath advert_paths[ADVERT_PATH_TABLE_SIZE];
+  AdvertPath advert_paths[ADVERT_PATH_TABLE_SIZE]; // circular table
 };
 
 extern MyMesh the_mesh;
