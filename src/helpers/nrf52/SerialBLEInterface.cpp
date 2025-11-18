@@ -31,6 +31,8 @@ void SerialBLEInterface::onConnect(uint16_t connection_handle) {
     instance->_connectionHandle = connection_handle;
     instance->_isDeviceConnected = false;
     instance->_pending_writes = 0;
+    instance->_disconnect_waiting_tx_drain = false;
+    instance->_tx_drain_wait_start = 0;
     instance->clearBuffers();
   }
 }
@@ -53,6 +55,8 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
     instance->_last_disconnect_time = millis();
     instance->_disconnect_pending = false;
     instance->_disconnect_initiated_time = 0;
+    instance->_disconnect_waiting_tx_drain = false;
+    instance->_tx_drain_wait_start = 0;
     
     // Drain any remaining data in BLE UART RX buffer to start with clean slate
     uint8_t discard[32];
@@ -85,6 +89,8 @@ void SerialBLEInterface::onSecured(uint16_t connection_handle) {
       instance->_first_write_failure_time = 0;
       instance->_disconnect_pending = false;
       instance->_disconnect_initiated_time = 0;
+      instance->_disconnect_waiting_tx_drain = false;
+      instance->_tx_drain_wait_start = 0;
     } else {
       BLE_DEBUG_PRINTLN("SerialBLEInterface: onSecured with invalid handle=%d", connection_handle);
       instance->_isDeviceConnected = false;
@@ -402,11 +408,107 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
       _connectionHandle = 0xFFFF;
       _disconnect_pending = false;
       _disconnect_initiated_time = 0;
+      _disconnect_waiting_tx_drain = false;
+      _tx_drain_wait_start = 0;
       _last_disconnect_time = millis();
       send_queue_len = 0;
       _pending_writes = 0;
       _write_retry_count = 0;
       _first_write_failure_time = 0;
+    }
+  }
+  
+  // Check if we're waiting for TX queue to drain before forcing disconnect
+  if (_disconnect_waiting_tx_drain && _tx_drain_wait_start > 0) {
+    if (_pending_writes == 0) {
+      // TX queue is empty, proceed with disconnect immediately
+      BLE_DEBUG_PRINTLN("TX queue drained, proceeding with forced disconnect");
+      _disconnect_waiting_tx_drain = false;
+      _tx_drain_wait_start = 0;
+      // Proceed with disconnect if connection is valid and rate limit allows
+      if (isConnectionHandleValid()) {
+        unsigned long time_since_last_disconnect = millis() - _last_disconnect_time;
+        if (time_since_last_disconnect >= MIN_DISCONNECT_INTERVAL) {
+          uint32_t err = sd_ble_gap_disconnect(_connectionHandle, BLE_HCI_LOCAL_HOST_TERMINATED_CONNECTION);
+          if (err == NRF_SUCCESS) {
+            _disconnect_initiated_time = millis();
+            _disconnect_pending = true;
+            BLE_DEBUG_PRINTLN("Disconnect initiated after TX drain, waiting for event");
+          } else if (err == NRF_ERROR_NO_MEM) {
+            BLE_DEBUG_PRINTLN("NRF_ERROR_NO_MEM after TX drain - SoftDevice out of memory, clearing state");
+            _isDeviceConnected = false;
+            _connectionHandle = 0xFFFF;
+            _disconnect_pending = false;
+            _disconnect_initiated_time = 0;
+            _last_disconnect_time = millis();
+            send_queue_len = 0;
+            _pending_writes = 0;
+            _write_retry_count = 0;
+            _first_write_failure_time = 0;
+          } else {
+            BLE_DEBUG_PRINTLN("Disconnect failed after TX drain with error: 0x%08X", (uint32_t)err);
+            _isDeviceConnected = false;
+            _connectionHandle = 0xFFFF;
+          }
+        } else {
+          BLE_DEBUG_PRINTLN("Disconnect rate limited after TX drain - waiting %d ms", 
+                           (uint32_t)(MIN_DISCONNECT_INTERVAL - time_since_last_disconnect));
+          _isDeviceConnected = false;
+        }
+      } else {
+        // Invalid handle, just clear state
+        _isDeviceConnected = false;
+        _connectionHandle = 0xFFFF;
+      }
+    } else {
+      // Still waiting for TX queue to drain - check timeout
+      unsigned long time_waiting = millis() - _tx_drain_wait_start;
+      if (time_waiting >= TX_QUEUE_DRAIN_TIMEOUT) {
+        BLE_DEBUG_PRINTLN("TX queue drain timeout after %d ms (pending=%d), forcing disconnect anyway", 
+                         (uint32_t)time_waiting, _pending_writes);
+        _disconnect_waiting_tx_drain = false;
+        _tx_drain_wait_start = 0;
+        // Proceed with disconnect if connection is valid and rate limit allows
+        if (isConnectionHandleValid()) {
+          unsigned long time_since_last_disconnect = millis() - _last_disconnect_time;
+          if (time_since_last_disconnect >= MIN_DISCONNECT_INTERVAL) {
+            uint32_t err = sd_ble_gap_disconnect(_connectionHandle, BLE_HCI_LOCAL_HOST_TERMINATED_CONNECTION);
+            if (err == NRF_SUCCESS) {
+              _disconnect_initiated_time = millis();
+              _disconnect_pending = true;
+              BLE_DEBUG_PRINTLN("Disconnect initiated after TX drain timeout, waiting for event");
+            } else if (err == NRF_ERROR_NO_MEM) {
+              BLE_DEBUG_PRINTLN("NRF_ERROR_NO_MEM after TX drain timeout - SoftDevice out of memory, clearing state");
+              _isDeviceConnected = false;
+              _connectionHandle = 0xFFFF;
+              _disconnect_pending = false;
+              _disconnect_initiated_time = 0;
+              _last_disconnect_time = millis();
+              send_queue_len = 0;
+              _pending_writes = 0;
+              _write_retry_count = 0;
+              _first_write_failure_time = 0;
+            } else {
+              BLE_DEBUG_PRINTLN("Disconnect failed after TX drain timeout with error: 0x%08X", (uint32_t)err);
+              _isDeviceConnected = false;
+              _connectionHandle = 0xFFFF;
+            }
+          } else {
+            BLE_DEBUG_PRINTLN("Disconnect rate limited after TX drain timeout - waiting %d ms", 
+                             (uint32_t)(MIN_DISCONNECT_INTERVAL - time_since_last_disconnect));
+            _isDeviceConnected = false;
+          }
+        } else {
+          // Invalid handle, just clear state
+          _isDeviceConnected = false;
+          _connectionHandle = 0xFFFF;
+        }
+      } else {
+        // Still waiting, don't proceed with disconnect yet
+        BLE_DEBUG_PRINTLN("Waiting for TX queue to drain: pending=%d, waited=%d ms", 
+                         _pending_writes, (uint32_t)time_waiting);
+        // Don't return early - still process RX and other operations
+      }
     }
   }
   
@@ -466,29 +568,47 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
               // Don't disconnect yet, but clear state to prevent further writes
               _isDeviceConnected = false;
             } else if (isConnectionHandleValid()) {
-              // Use SoftDevice API directly to get error codes
-              uint32_t err = sd_ble_gap_disconnect(_connectionHandle, BLE_HCI_LOCAL_HOST_TERMINATED_CONNECTION);
-              if (err == NRF_SUCCESS) {
-                _disconnect_initiated_time = millis();
-                _disconnect_pending = true;
-                BLE_DEBUG_PRINTLN("Disconnect initiated, waiting for event");
-              } else if (err == NRF_ERROR_NO_MEM) {
-                BLE_DEBUG_PRINTLN("NRF_ERROR_NO_MEM - SoftDevice out of memory, clearing state");
-                // SoftDevice is out of memory - force complete state reset
-                _isDeviceConnected = false;
-                _connectionHandle = 0xFFFF;
-                _disconnect_pending = false;
-                _disconnect_initiated_time = 0;
-                _last_disconnect_time = millis();
-                send_queue_len = 0;  // Clear send queue
-                _pending_writes = 0;  // Clear pending writes
-                _write_retry_count = 0;
-                _first_write_failure_time = 0;
+              // Check if TX queue is empty before forcing disconnect
+              // This prevents crashes when disconnecting with pending operations (see GitHub issue #281)
+              if (_pending_writes > 0 && !_disconnect_waiting_tx_drain) {
+                // TX queue not empty - wait for it to drain first
+                BLE_DEBUG_PRINTLN("TX queue not empty (pending=%d), waiting for drain before disconnect", _pending_writes);
+                _disconnect_waiting_tx_drain = true;
+                _tx_drain_wait_start = millis();
+                // Don't disconnect yet - will be handled in next checkRecvFrame() call
+              } else if (_pending_writes == 0 || (_disconnect_waiting_tx_drain && _tx_drain_wait_start > 0 && 
+                         (millis() - _tx_drain_wait_start >= TX_QUEUE_DRAIN_TIMEOUT || _pending_writes == 0))) {
+                // TX queue is empty or timeout expired - safe to disconnect
+                // Clear wait flags since we're proceeding with disconnect
+                _disconnect_waiting_tx_drain = false;
+                _tx_drain_wait_start = 0;
+                // Use SoftDevice API directly to get error codes
+                uint32_t err = sd_ble_gap_disconnect(_connectionHandle, BLE_HCI_LOCAL_HOST_TERMINATED_CONNECTION);
+                if (err == NRF_SUCCESS) {
+                  _disconnect_initiated_time = millis();
+                  _disconnect_pending = true;
+                  BLE_DEBUG_PRINTLN("Disconnect initiated, waiting for event");
+                } else if (err == NRF_ERROR_NO_MEM) {
+                  BLE_DEBUG_PRINTLN("NRF_ERROR_NO_MEM - SoftDevice out of memory, clearing state");
+                  // SoftDevice is out of memory - force complete state reset
+                  _isDeviceConnected = false;
+                  _connectionHandle = 0xFFFF;
+                  _disconnect_pending = false;
+                  _disconnect_initiated_time = 0;
+                  _last_disconnect_time = millis();
+                  send_queue_len = 0;  // Clear send queue
+                  _pending_writes = 0;  // Clear pending writes
+                  _write_retry_count = 0;
+                  _first_write_failure_time = 0;
+                } else {
+                  BLE_DEBUG_PRINTLN("Disconnect failed with error: 0x%08X", (uint32_t)err);
+                  // Disconnect failed, but clear state anyway
+                  _isDeviceConnected = false;
+                  _connectionHandle = 0xFFFF;
+                }
               } else {
-                BLE_DEBUG_PRINTLN("Disconnect failed with error: 0x%08X", (uint32_t)err);
-                // Disconnect failed, but clear state anyway
-                _isDeviceConnected = false;
-                _connectionHandle = 0xFFFF;
+                // Still waiting for TX queue to drain - will retry on next checkRecvFrame() call
+                // Don't proceed with disconnect yet
               }
             } else {
               // Invalid handle, just clear state

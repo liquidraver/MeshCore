@@ -27,6 +27,7 @@ class SerialBLEInterface : public BaseSerialInterface {
   #define MAX_WRITE_FAILURE_DURATION 5000  // Force disconnect if writes fail for 5 seconds
   #define MIN_DISCONNECT_INTERVAL 3000  // Minimum time between disconnects (3 seconds) to prevent rapid cycles
   #define DISCONNECT_EVENT_TIMEOUT 2000  // If disconnect event doesn't arrive within 2 seconds, assume disconnected
+  #define TX_QUEUE_DRAIN_TIMEOUT 2000  // Maximum time to wait for TX queue to drain before forcing disconnect
   int send_queue_len;
   Frame send_queue[FRAME_QUEUE_SIZE];
   uint8_t _write_retry_count;
@@ -34,6 +35,8 @@ class SerialBLEInterface : public BaseSerialInterface {
   unsigned long _last_disconnect_time;  // Track last disconnect time for rate limiting
   unsigned long _disconnect_initiated_time;  // Track when disconnect was initiated for timeout
   bool _disconnect_pending;  // Track if we're waiting for disconnect event
+  bool _disconnect_waiting_tx_drain;  // Track if we're waiting for TX queue to drain before disconnecting
+  unsigned long _tx_drain_wait_start;  // Track when we started waiting for TX queue to drain
 
   void clearBuffers() {
     send_queue_len = 0;
@@ -65,6 +68,8 @@ public:
     _last_disconnect_time = 0;
     _disconnect_initiated_time = 0;
     _disconnect_pending = false;
+    _disconnect_waiting_tx_drain = false;
+    _tx_drain_wait_start = 0;
   }
 
   void startAdv();
