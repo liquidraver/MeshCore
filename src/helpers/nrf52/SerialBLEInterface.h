@@ -23,12 +23,23 @@ class SerialBLEInterface : public BaseSerialInterface {
 
   #define FRAME_QUEUE_SIZE  4
   #define MAX_PENDING_WRITES 8
+  #define MAX_WRITE_RETRIES 3
+  #define MAX_WRITE_FAILURE_DURATION 5000  // Force disconnect if writes fail for 5 seconds
+  #define MIN_DISCONNECT_INTERVAL 2000  // Minimum time between disconnects (2 seconds) to prevent rapid cycles
+  #define DISCONNECT_EVENT_TIMEOUT 2000  // If disconnect event doesn't arrive within 2 seconds, assume disconnected
   int send_queue_len;
   Frame send_queue[FRAME_QUEUE_SIZE];
+  uint8_t _write_retry_count;
+  unsigned long _first_write_failure_time;  // Track when write failures started
+  unsigned long _last_disconnect_time;  // Track last disconnect time for rate limiting
+  unsigned long _disconnect_initiated_time;  // Track when disconnect was initiated for timeout
+  bool _disconnect_pending;  // Track if we're waiting for disconnect event
 
   void clearBuffers() {
     send_queue_len = 0;
     _pending_writes = 0;
+    _write_retry_count = 0;
+    _first_write_failure_time = 0;
   }
   bool isConnectionHandleValid() const {
     return _connectionHandle != 0xFFFF;
@@ -49,6 +60,11 @@ public:
     _pending_writes = 0;
     _advRestartPending = false;
     _advRestartTime = 0;
+    _write_retry_count = 0;
+    _first_write_failure_time = 0;
+    _last_disconnect_time = 0;
+    _disconnect_initiated_time = 0;
+    _disconnect_pending = false;
   }
 
   void startAdv();

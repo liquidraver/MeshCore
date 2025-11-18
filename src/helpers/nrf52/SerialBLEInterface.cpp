@@ -1,8 +1,24 @@
 #include "SerialBLEInterface.h"
 #include <string.h>
 #include "ble_gap.h"
+#include "ble_err.h"
+#include "ble_hci.h"
+#include "nrf_error.h"
 
 static SerialBLEInterface* instance;
+
+// Helper function to validate connection handle using SoftDevice API
+// Only used after write failures to detect stale connection states
+static bool isValidConnectionHandleSD(uint16_t conn_handle) {
+  if (conn_handle == BLE_CONN_HANDLE_INVALID || conn_handle == 0xFFFF) {
+    return false;
+  }
+  
+  // Query connection security state - returns BLE_ERROR_INVALID_CONN_HANDLE if handle is invalid
+  ble_gap_conn_sec_t conn_sec;
+  uint32_t err = sd_ble_gap_conn_sec_get(conn_handle, &conn_sec);
+  return (err == NRF_SUCCESS);
+}
 
 void SerialBLEInterface::onConnect(uint16_t connection_handle) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: connected handle=0x%04X", connection_handle);
@@ -30,8 +46,13 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
     instance->_isDeviceConnected = false;
     instance->_connectionHandle = 0xFFFF;
     instance->_pending_writes = 0;
-
     instance->send_queue_len = 0;
+    // Reset write failure tracking and disconnect state
+    instance->_write_retry_count = 0;
+    instance->_first_write_failure_time = 0;
+    instance->_last_disconnect_time = millis();
+    instance->_disconnect_pending = false;
+    instance->_disconnect_initiated_time = 0;
   }
 }
 
@@ -44,6 +65,11 @@ void SerialBLEInterface::onSecured(uint16_t connection_handle) {
       return;
     }
     instance->_isDeviceConnected = true;
+    // Reset write failure tracking on new secure connection
+    instance->_write_retry_count = 0;
+    instance->_first_write_failure_time = 0;
+    instance->_disconnect_pending = false;
+    instance->_disconnect_initiated_time = 0;
   }
 }
 
@@ -331,11 +357,32 @@ bool SerialBLEInterface::isWriteBusy() const {
 }
 
 size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
+  // Check for disconnect event timeout - if we initiated a disconnect but event didn't arrive
+  if (_disconnect_pending && _disconnect_initiated_time > 0) {
+    unsigned long time_since_disconnect = millis() - _disconnect_initiated_time;
+    if (time_since_disconnect >= DISCONNECT_EVENT_TIMEOUT) {
+      BLE_DEBUG_PRINTLN("Disconnect event timeout - assuming disconnected after %d ms", 
+                       (uint32_t)time_since_disconnect);
+      // Disconnect event didn't arrive - assume we're disconnected
+      _isDeviceConnected = false;
+      _connectionHandle = 0xFFFF;
+      _disconnect_pending = false;
+      _disconnect_initiated_time = 0;
+      _last_disconnect_time = millis();
+      send_queue_len = 0;
+      _pending_writes = 0;
+      _write_retry_count = 0;
+      _first_write_failure_time = 0;
+    }
+  }
+  
   if (send_queue_len > 0 && _pending_writes < MAX_PENDING_WRITES) {
     if (_isDeviceConnected && isConnectionHandleValid() && bleuart.notifyEnabled(_connectionHandle)) {
       size_t written = bleuart.write(send_queue[0].buf, send_queue[0].len);
       if (written > 0) {
         _pending_writes++;
+        _write_retry_count = 0;  // Reset retry counter on success
+        _first_write_failure_time = 0;  // Reset failure timer on success
         BLE_DEBUG_PRINTLN("writeBytes: sz=%d, hdr=%d, pending=%d",
                          (uint32_t)send_queue[0].len, (uint32_t)send_queue[0].buf[0],
                          _pending_writes);
@@ -345,7 +392,93 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
           send_queue[i] = send_queue[i + 1];
         }
       } else {
-        BLE_DEBUG_PRINTLN("writeBytes failed, pending=%d", _pending_writes);
+        // Track when write failures started
+        if (_first_write_failure_time == 0) {
+          _first_write_failure_time = millis();
+        }
+        
+        _write_retry_count++;
+        BLE_DEBUG_PRINTLN("writeBytes failed, retry=%d, pending=%d", _write_retry_count, _pending_writes);
+        
+        // Re-check connection validity after failed write using SoftDevice API
+        // Only do expensive validation after failures, not before every write
+        bool still_valid = _isDeviceConnected && 
+                          isConnectionHandleValid() && 
+                          bleuart.notifyEnabled(_connectionHandle);
+        
+        if (still_valid) {
+          // Validate connection handle using SoftDevice API to detect stale handles
+          if (!isValidConnectionHandleSD(_connectionHandle)) {
+            BLE_DEBUG_PRINTLN("Connection handle invalid after write failure");
+            still_valid = false;
+          }
+        }
+        
+        // Check if we've been failing for too long - force disconnect to recover
+        bool failure_timeout = (_first_write_failure_time > 0) && 
+                              (millis() - _first_write_failure_time >= MAX_WRITE_FAILURE_DURATION);
+        
+        // Drop frame after max retries, if connection is invalid, or if failures persist too long
+        if (_write_retry_count >= MAX_WRITE_RETRIES || !still_valid || failure_timeout) {
+          if (failure_timeout) {
+            BLE_DEBUG_PRINTLN("Write failures persisted for %d ms, forcing disconnect", 
+                             (uint32_t)(millis() - _first_write_failure_time));
+            // Force disconnect to recover from bad connection state
+            // Check rate limiting - prevent rapid disconnect/reconnect cycles
+            unsigned long time_since_last_disconnect = millis() - _last_disconnect_time;
+            if (time_since_last_disconnect < MIN_DISCONNECT_INTERVAL) {
+              BLE_DEBUG_PRINTLN("Disconnect rate limited - waiting %d ms", 
+                               (uint32_t)(MIN_DISCONNECT_INTERVAL - time_since_last_disconnect));
+              // Don't disconnect yet, but clear state to prevent further writes
+              _isDeviceConnected = false;
+            } else if (isConnectionHandleValid()) {
+              // Use SoftDevice API directly to get error codes
+              uint32_t err = sd_ble_gap_disconnect(_connectionHandle, BLE_HCI_LOCAL_HOST_TERMINATED_CONNECTION);
+              if (err == NRF_SUCCESS) {
+                _disconnect_initiated_time = millis();
+                _disconnect_pending = true;
+                BLE_DEBUG_PRINTLN("Disconnect initiated, waiting for event");
+              } else if (err == NRF_ERROR_NO_MEM) {
+                BLE_DEBUG_PRINTLN("NRF_ERROR_NO_MEM - SoftDevice out of memory, clearing state");
+                // SoftDevice is out of memory - force complete state reset
+                _isDeviceConnected = false;
+                _connectionHandle = 0xFFFF;
+                _disconnect_pending = false;
+                _disconnect_initiated_time = 0;
+                _last_disconnect_time = millis();
+                send_queue_len = 0;  // Clear send queue
+                _pending_writes = 0;  // Clear pending writes
+                _write_retry_count = 0;
+                _first_write_failure_time = 0;
+              } else {
+                BLE_DEBUG_PRINTLN("Disconnect failed with error: 0x%08X", (uint32_t)err);
+                // Disconnect failed, but clear state anyway
+                _isDeviceConnected = false;
+                _connectionHandle = 0xFFFF;
+              }
+            } else {
+              // Invalid handle, just clear state
+              _isDeviceConnected = false;
+              _connectionHandle = 0xFFFF;
+            }
+          }
+          
+          BLE_DEBUG_PRINTLN("Dropping frame after %d failed write attempts (connection_valid=%d, timeout=%d)", 
+                           _write_retry_count, still_valid, failure_timeout);
+          _write_retry_count = 0;
+          _first_write_failure_time = 0;
+          send_queue_len--;
+          for (int i = 0; i < send_queue_len; i++) {
+            send_queue[i] = send_queue[i + 1];
+          }
+          
+          // If connection is invalid, clear connection state
+          if (!still_valid || failure_timeout) {
+            BLE_DEBUG_PRINTLN("Connection invalid, clearing state");
+            _isDeviceConnected = false;
+            _connectionHandle = 0xFFFF;
+          }
+        }
       }
     }
   } else {
