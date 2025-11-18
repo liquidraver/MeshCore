@@ -7,6 +7,8 @@
 #define BLE_TX_POWER 4
 #endif
 
+// BLE serial interface implementation for nRF52 using Bluefruit library
+// Provides frame-based communication over BLE UART service with connection management
 class SerialBLEInterface : public BaseSerialInterface {
   BLEUart bleuart;
   bool _isEnabled;
@@ -72,19 +74,29 @@ public:
     _tx_drain_wait_start = 0;
   }
 
+  // Start BLE advertising to allow connections
   void startAdv();
+  // Stop BLE advertising
   void stopAdv();
+  // Initialize BLE stack, configure security, and set up advertising
   void begin(const char* device_name, uint32_t pin_code);
+  // Disconnect all active BLE connections
   void disconnect();
 
+  // Enable interface and start advertising
   void enable() override;
+  // Disable interface, disconnect, and stop advertising
   void disable() override;
   bool isEnabled() const override { return _isEnabled; }
 
+  // Check if device is connected and connection handle is valid
   bool isConnected() const override;
 
+  // Check if write queue is at capacity
   bool isWriteBusy() const override;
+  // Queue frame for transmission over BLE
   size_t writeFrame(const uint8_t src[], size_t len) override;
+  // Process received frames and handle outgoing frame queue
   size_t checkRecvFrame(uint8_t dest[]) override;
 };
 

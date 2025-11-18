@@ -7,8 +7,8 @@
 
 static SerialBLEInterface* instance;
 
-// Helper function to validate connection handle using SoftDevice API
-// Only used after write failures to detect stale connection states
+// Validates connection handle using SoftDevice API
+// Queries connection security state to verify handle is still active
 static bool isValidConnectionHandleSD(uint16_t conn_handle) {
   if (conn_handle == BLE_CONN_HANDLE_INVALID || conn_handle == 0xFFFF) {
     return false;
@@ -20,6 +20,8 @@ static bool isValidConnectionHandleSD(uint16_t conn_handle) {
   return (err == NRF_SUCCESS);
 }
 
+// Callback invoked when BLE connection is established
+// Updates connection handle and resets state for new connection
 void SerialBLEInterface::onConnect(uint16_t connection_handle) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: connected handle=0x%04X", connection_handle);
   if (instance) {
@@ -37,6 +39,8 @@ void SerialBLEInterface::onConnect(uint16_t connection_handle) {
   }
 }
 
+// Callback invoked when BLE connection is terminated
+// Clears connection state and drains remaining RX buffer data
 void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected handle=0x%04X reason=%d", connection_handle, reason);
   if(instance){
@@ -73,6 +77,8 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
   }
 }
 
+// Callback invoked when BLE connection security is established
+// Validates connection handle and marks device as fully connected
 void SerialBLEInterface::onSecured(uint16_t connection_handle) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: onSecured handle=0x%04X", connection_handle);
   if(instance){
@@ -98,6 +104,8 @@ void SerialBLEInterface::onSecured(uint16_t connection_handle) {
   }
 }
 
+// Callback for BLE pairing passkey display/verification
+// Returns true to accept pairing request
 bool SerialBLEInterface::onPairingPasskey(uint16_t connection_handle, uint8_t const passkey[6], bool match_request) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: pairing passkey request match=%d", match_request);
   (void)connection_handle;
@@ -105,6 +113,8 @@ bool SerialBLEInterface::onPairingPasskey(uint16_t connection_handle, uint8_t co
   return true;
 }
 
+// Callback invoked when BLE pairing process completes
+// Disconnects if pairing failed, otherwise connection proceeds to secured state
 void SerialBLEInterface::onPairingComplete(uint16_t connection_handle, uint8_t auth_status) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: pairing complete status=%d", auth_status);
   if (auth_status == BLE_GAP_SEC_STATUS_SUCCESS) {
@@ -117,6 +127,8 @@ void SerialBLEInterface::onPairingComplete(uint16_t connection_handle, uint8_t a
   }
 }
 
+// Central BLE event handler for GAP and GATTS events
+// Processes connection parameter updates, PHY updates, data length updates, and TX completion
 void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
   if (!instance) return;
   uint16_t conn_handle = 0xFFFF;
@@ -270,6 +282,8 @@ void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
   }
 }
 
+// Initialize BLE stack with device name and PIN code
+// Configures security, advertising, and registers all callbacks
 void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
 
   instance = this;
@@ -315,6 +329,7 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
 
 }
 
+// Start BLE advertising if not already running
 void SerialBLEInterface::startAdv() {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: starting advertising");
 
@@ -326,6 +341,7 @@ void SerialBLEInterface::startAdv() {
   Bluefruit.Advertising.start(0);
 }
 
+// Stop BLE advertising if currently running
 void SerialBLEInterface::stopAdv() {
 
   BLE_DEBUG_PRINTLN("SerialBLEInterface: stopping advertising");
@@ -338,6 +354,7 @@ void SerialBLEInterface::stopAdv() {
 
 }
 
+// Enable interface, clear buffers, and start advertising
 void SerialBLEInterface::enable() {
   if (_isEnabled) return;
 
@@ -348,6 +365,7 @@ void SerialBLEInterface::enable() {
   startAdv();
 }
 
+// Disconnect all active BLE connections and wait for completion
 void SerialBLEInterface::disconnect() {
   uint8_t connection_num = Bluefruit.connected();
   if (connection_num) {
@@ -361,6 +379,7 @@ void SerialBLEInterface::disconnect() {
   }
 }
 
+// Disable interface, disconnect connections, and stop advertising
 void SerialBLEInterface::disable() {
   _isEnabled = false;
   BLE_DEBUG_PRINTLN("SerialBLEInterface: disable");
@@ -371,6 +390,8 @@ void SerialBLEInterface::disable() {
   stopAdv();
 }
 
+// Queue frame for transmission over BLE
+// Returns frame length if queued successfully, 0 if queue is full or not connected
 size_t SerialBLEInterface::writeFrame(const uint8_t src[], size_t len) {
   if (len > MAX_FRAME_SIZE) {
     BLE_DEBUG_PRINTLN("writeFrame(), frame too big, len=%d", len);
@@ -392,10 +413,14 @@ size_t SerialBLEInterface::writeFrame(const uint8_t src[], size_t len) {
   return 0;
 }
 
+// Check if write queue has reached maximum pending writes
 bool SerialBLEInterface::isWriteBusy() const {
   return _pending_writes >= MAX_PENDING_WRITES;
 }
 
+// Process received frames, handle outgoing queue, and manage connection state
+// Handles disconnect timeouts, TX queue draining, write retries, and connection recovery
+// Returns length of received frame, or 0 if no frame available
 size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
   // Check for disconnect event timeout - if we initiated a disconnect but event didn't arrive
   if (_disconnect_pending && _disconnect_initiated_time > 0) {
@@ -661,6 +686,7 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
   return 0;
 }
 
+// Check if device is connected by verifying connection handle and Bluefruit connection state
 bool SerialBLEInterface::isConnected() const {
   if (!_isDeviceConnected) return false;
   if (isConnectionHandleValid()) {
