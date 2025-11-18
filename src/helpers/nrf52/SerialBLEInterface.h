@@ -4,7 +4,7 @@
 #include <bluefruit.h>
 
 #ifndef BLE_TX_POWER
-#define BLE_TX_POWER 2
+#define BLE_TX_POWER 4
 #endif
 
 class SerialBLEInterface : public BaseSerialInterface {
