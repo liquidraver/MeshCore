@@ -64,12 +64,18 @@ void SerialBLEInterface::onSecured(uint16_t connection_handle) {
                        instance->_connectionHandle, connection_handle);
       return;
     }
-    instance->_isDeviceConnected = true;
-    // Reset write failure tracking on new secure connection
-    instance->_write_retry_count = 0;
-    instance->_first_write_failure_time = 0;
-    instance->_disconnect_pending = false;
-    instance->_disconnect_initiated_time = 0;
+    // Validate connection handle before setting state
+    if (isValidConnectionHandleSD(connection_handle)) {
+      instance->_isDeviceConnected = true;
+      // Reset write failure tracking on new secure connection
+      instance->_write_retry_count = 0;
+      instance->_first_write_failure_time = 0;
+      instance->_disconnect_pending = false;
+      instance->_disconnect_initiated_time = 0;
+    } else {
+      BLE_DEBUG_PRINTLN("SerialBLEInterface: onSecured with invalid handle=%d", connection_handle);
+      instance->_isDeviceConnected = false;
+    }
   }
 }
 
