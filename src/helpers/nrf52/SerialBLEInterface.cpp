@@ -594,7 +594,7 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
               _isDeviceConnected = false;
             } else if (isConnectionHandleValid()) {
               // Check if TX queue is empty before forcing disconnect
-              // This prevents crashes when disconnecting with pending operations (see GitHub issue #281)
+              // This prevents crashes when disconnecting with pending operations
               if (_pending_writes > 0 && !_disconnect_waiting_tx_drain) {
                 // TX queue not empty - wait for it to drain first
                 BLE_DEBUG_PRINTLN("TX queue not empty (pending=%d), waiting for drain before disconnect", _pending_writes);
