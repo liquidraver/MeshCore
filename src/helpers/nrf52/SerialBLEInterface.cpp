@@ -53,6 +53,19 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
     instance->_last_disconnect_time = millis();
     instance->_disconnect_pending = false;
     instance->_disconnect_initiated_time = 0;
+    
+    // Drain any remaining data in BLE UART RX buffer to start with clean slate
+    uint8_t discard[32];
+    int drained_total = 0;
+    while (instance->bleuart.available() > 0) {
+      int chunk = instance->bleuart.available() < (int)sizeof(discard) ? instance->bleuart.available() : (int)sizeof(discard);
+      int drained = instance->bleuart.readBytes(discard, chunk);
+      if (drained <= 0) break;
+      drained_total += drained;
+    }
+    if (drained_total > 0) {
+      BLE_DEBUG_PRINTLN("Drained %d bytes from BLE RX buffer on disconnect", drained_total);
+    }
   }
 }
 
@@ -108,6 +121,21 @@ void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
   }
 
   switch(evt->header.evt_id) {
+    case BLE_GAP_EVT_DISCONNECTED:
+      // Disconnect is handled by onDisconnect callback, but we catch it here to avoid "unhandled" log
+      // The handle may be 0x0000 for advertising-related disconnects
+      break;
+
+    case BLE_GAP_EVT_SEC_INFO_REQUEST:
+      // Security info request is handled by Bluefruit Security callbacks, but we catch it here to avoid "unhandled" log
+      // The handle may be 0x0000 for advertising-related events
+      break;
+
+    case BLE_GAP_EVT_CONN_SEC_UPDATE:
+      // Connection security update is handled by onSecured callback, but we catch it here to avoid "unhandled" log
+      // The handle may be 0x0000 for advertising-related events
+      break;
+
     case BLE_GATTS_EVT_HVN_TX_COMPLETE:
       if (instance->_pending_writes > 0) {
         uint8_t completed = evt->evt.gatts_evt.params.hvn_tx_complete.count;

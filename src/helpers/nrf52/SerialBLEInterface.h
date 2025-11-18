@@ -25,7 +25,7 @@ class SerialBLEInterface : public BaseSerialInterface {
   #define MAX_PENDING_WRITES 8
   #define MAX_WRITE_RETRIES 3
   #define MAX_WRITE_FAILURE_DURATION 5000  // Force disconnect if writes fail for 5 seconds
-  #define MIN_DISCONNECT_INTERVAL 2000  // Minimum time between disconnects (2 seconds) to prevent rapid cycles
+  #define MIN_DISCONNECT_INTERVAL 3000  // Minimum time between disconnects (3 seconds) to prevent rapid cycles
   #define DISCONNECT_EVENT_TIMEOUT 2000  // If disconnect event doesn't arrive within 2 seconds, assume disconnected
   int send_queue_len;
   Frame send_queue[FRAME_QUEUE_SIZE];
