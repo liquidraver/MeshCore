@@ -1,66 +1,33 @@
 #include "SerialBLEInterface.h"
 #include <string.h>
 #include "ble_gap.h"
-#include "ble_err.h"
-#include "ble_hci.h"
-#include "nrf_error.h"
 
 static SerialBLEInterface* instance;
 
-// Validates connection handle using SoftDevice API
-// Queries connection security state to verify handle is still active
-static bool isValidConnectionHandleSD(uint16_t conn_handle) {
-  if (conn_handle == BLE_CONN_HANDLE_INVALID || conn_handle == 0xFFFF) {
-    return false;
-  }
-  
-  // Query connection security state - returns BLE_ERROR_INVALID_CONN_HANDLE if handle is invalid
-  ble_gap_conn_sec_t conn_sec;
-  uint32_t err = sd_ble_gap_conn_sec_get(conn_handle, &conn_sec);
-  return (err == NRF_SUCCESS);
-}
-
-// Callback invoked when BLE connection is established
-// Updates connection handle and resets state for new connection
 void SerialBLEInterface::onConnect(uint16_t connection_handle) {
-  BLE_DEBUG_PRINTLN("SerialBLEInterface: connected handle=0x%04X", connection_handle);
+  (void)connection_handle;  // Unused - we only support one connection
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: connected");
   if (instance) {
-    if (instance->isConnectionHandleValid() && instance->_connectionHandle != connection_handle) {
-      BLE_DEBUG_PRINTLN("WARN: New connection with different handle! Old=0x%04X, New=0x%04X", 
-                       instance->_connectionHandle, connection_handle);
-      Bluefruit.disconnect(instance->_connectionHandle);
-    }
-    instance->_connectionHandle = connection_handle;
     instance->_isDeviceConnected = false;
-    instance->_pending_writes = 0;
-    instance->_disconnect_waiting_tx_drain = false;
-    instance->_tx_drain_wait_start = 0;
     instance->clearBuffers();
+    instance->stopAdv();
   }
 }
 
 // Callback invoked when BLE connection is terminated
 // Clears connection state and drains remaining RX buffer data
 void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason) {
-  BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected handle=0x%04X reason=%d", connection_handle, reason);
+  (void)connection_handle;  // Unused - we only support one connection
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected reason=%d", reason);
   if(instance){
-    if (instance->isConnectionHandleValid() && instance->_connectionHandle != connection_handle) {
-      BLE_DEBUG_PRINTLN("WARN: Disconnect event for wrong handle! Stored=0x%04X, Event=0x%04X", 
-                       instance->_connectionHandle, connection_handle);
-      return;
-    }
     instance->_isDeviceConnected = false;
-    instance->_connectionHandle = 0xFFFF;
-    instance->_pending_writes = 0;
-    instance->send_queue_len = 0;
-    // Reset write failure tracking and disconnect state
-    instance->_write_retry_count = 0;
-    instance->_first_write_failure_time = 0;
-    instance->_last_disconnect_time = millis();
-    instance->_disconnect_pending = false;
-    instance->_disconnect_initiated_time = 0;
-    instance->_disconnect_waiting_tx_drain = false;
-    instance->_tx_drain_wait_start = 0;
+    instance->clearBuffers();
+    
+    // Delay advertising restart to respect grace period
+    if (instance->_isEnabled) {
+      instance->_advRestartPending = true;
+      instance->_advRestartTime = millis();
+    }
     
     // Drain any remaining data in BLE UART RX buffer to start with clean slate
     uint8_t discard[32];
@@ -78,28 +45,26 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
 }
 
 // Callback invoked when BLE connection security is established
-// Validates connection handle and marks device as fully connected
+// Marks device as fully connected and requests optimal connection parameters
 void SerialBLEInterface::onSecured(uint16_t connection_handle) {
-  BLE_DEBUG_PRINTLN("SerialBLEInterface: onSecured handle=0x%04X", connection_handle);
+  (void)connection_handle;  // Unused - we only support one connection
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: onSecured");
   if(instance){
-    if (!instance->isConnectionHandleValid() || instance->_connectionHandle != connection_handle) {
-      BLE_DEBUG_PRINTLN("WARN: onSecured with mismatched handle! Stored=0x%04X, Event=0x%04X", 
-                       instance->_connectionHandle, connection_handle);
-      return;
-    }
-    // Validate connection handle before setting state
-    if (isValidConnectionHandleSD(connection_handle)) {
-      instance->_isDeviceConnected = true;
-      // Reset write failure tracking on new secure connection
-      instance->_write_retry_count = 0;
-      instance->_first_write_failure_time = 0;
-      instance->_disconnect_pending = false;
-      instance->_disconnect_initiated_time = 0;
-      instance->_disconnect_waiting_tx_drain = false;
-      instance->_tx_drain_wait_start = 0;
+    instance->_isDeviceConnected = true;
+    
+    // Request connection parameter update with Apple-compliant values
+    // Min: 15ms (12 × 1.25ms), Max: 30ms (24 × 1.25ms), Latency: 0, Timeout: 2s (200 × 10ms)
+    ble_gap_conn_params_t conn_params;
+    conn_params.min_conn_interval = 12;   // 15ms
+    conn_params.max_conn_interval = 24;   // 30ms
+    conn_params.slave_latency = 0;
+    conn_params.conn_sup_timeout = 200;   // 2 seconds (Apple minimum recommendation)
+    
+    uint32_t err_code = sd_ble_gap_conn_param_update(0x0000, &conn_params);
+    if (err_code == NRF_SUCCESS) {
+      BLE_DEBUG_PRINTLN("Connection parameter update requested: 15-30ms interval, 2s timeout");
     } else {
-      BLE_DEBUG_PRINTLN("SerialBLEInterface: onSecured with invalid handle=%d", connection_handle);
-      instance->_isDeviceConnected = false;
+      BLE_DEBUG_PRINTLN("Failed to request connection parameter update: %lu", err_code);
     }
   }
 }
@@ -107,178 +72,41 @@ void SerialBLEInterface::onSecured(uint16_t connection_handle) {
 // Callback for BLE pairing passkey display/verification
 // Returns true to accept pairing request
 bool SerialBLEInterface::onPairingPasskey(uint16_t connection_handle, uint8_t const passkey[6], bool match_request) {
+  (void)connection_handle;  // Unused - we only support one connection
+  (void)passkey;  // Unused
   BLE_DEBUG_PRINTLN("SerialBLEInterface: pairing passkey request match=%d", match_request);
-  (void)connection_handle;
-  (void)passkey;
   return true;
 }
 
 // Callback invoked when BLE pairing process completes
 // Disconnects if pairing failed, otherwise connection proceeds to secured state
 void SerialBLEInterface::onPairingComplete(uint16_t connection_handle, uint8_t auth_status) {
+  (void)connection_handle;  // Unused - we only support one connection
   BLE_DEBUG_PRINTLN("SerialBLEInterface: pairing complete status=%d", auth_status);
   if (auth_status == BLE_GAP_SEC_STATUS_SUCCESS) {
     BLE_DEBUG_PRINTLN("SerialBLEInterface: pairing successful");
   } else {
     BLE_DEBUG_PRINTLN("SerialBLEInterface: pairing failed, disconnecting");
-    if (instance && instance->isConnectionHandleValid()) {
-      Bluefruit.disconnect(connection_handle);
+    if (instance) {
+      instance->disconnect();
     }
   }
 }
 
-// Central BLE event handler for GAP and GATTS events
-// Processes connection parameter updates, PHY updates, data length updates, and TX completion
+// BLE event handler - only handles TX completion events to track pending writes
 void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
   if (!instance) return;
-  uint16_t conn_handle = 0xFFFF;
-  if (evt->header.evt_id >= BLE_GAP_EVT_BASE && evt->header.evt_id <= BLE_GAP_EVT_LAST) {
-    conn_handle = evt->evt.gap_evt.conn_handle;
-  } else if (evt->header.evt_id >= BLE_GATTS_EVT_BASE && evt->header.evt_id <= BLE_GATTS_EVT_LAST) {
-    conn_handle = evt->evt.gatts_evt.conn_handle;
-  }
-
-  switch(evt->header.evt_id) {
-    case BLE_GAP_EVT_DISCONNECTED:
-      // Disconnect is handled by onDisconnect callback, but we catch it here to avoid "unhandled" log
-      // The handle may be 0x0000 for advertising-related disconnects
-      break;
-
-    case BLE_GAP_EVT_SEC_INFO_REQUEST:
-      // Security info request is handled by Bluefruit Security callbacks, but we catch it here to avoid "unhandled" log
-      // The handle may be 0x0000 for advertising-related events
-      break;
-
-    case BLE_GAP_EVT_CONN_SEC_UPDATE:
-      // Connection security update is handled by onSecured callback, but we catch it here to avoid "unhandled" log
-      // The handle may be 0x0000 for advertising-related events
-      break;
-
-    case BLE_GATTS_EVT_HVN_TX_COMPLETE:
-      if (instance->_pending_writes > 0) {
-        uint8_t completed = evt->evt.gatts_evt.params.hvn_tx_complete.count;
-        if (instance->_pending_writes >= completed) {
-          instance->_pending_writes -= completed;
-        } else {
-          instance->_pending_writes = 0;
-        }
-        BLE_DEBUG_PRINTLN("TX complete: %d, pending now: %d", completed, instance->_pending_writes);
-      }
-      break;
-
-    case BLE_GAP_EVT_CONN_PARAM_UPDATE_REQUEST: {
-      BLE_DEBUG_PRINTLN("CONN_PARAM_UPDATE_REQUEST: handle=0x%04X, min_interval=%d, max_interval=%d, latency=%d, timeout=%d",
-                       conn_handle,
-                       evt->evt.gap_evt.params.conn_param_update_request.conn_params.min_conn_interval,
-                       evt->evt.gap_evt.params.conn_param_update_request.conn_params.max_conn_interval,
-                       evt->evt.gap_evt.params.conn_param_update_request.conn_params.slave_latency,
-                       evt->evt.gap_evt.params.conn_param_update_request.conn_params.conn_sup_timeout);
-      
-      if (!instance->isConnectionHandleValid() || instance->_connectionHandle != conn_handle) {
-        BLE_DEBUG_PRINTLN("WARN: CONN_PARAM_UPDATE_REQUEST with mismatched handle! Stored=0x%04X, Event=0x%04X",
-                         instance->_connectionHandle, conn_handle);
-        return;
-      }
-      
-      uint32_t err_code = sd_ble_gap_conn_param_update(conn_handle, NULL);
-      if (err_code == NRF_SUCCESS) {
-        BLE_DEBUG_PRINTLN("Accepted CONN_PARAM_UPDATE_REQUEST (using PPCP)");
+  
+  if (evt->header.evt_id == BLE_GATTS_EVT_HVN_TX_COMPLETE) {
+    if (instance->_pending_writes > 0) {
+      uint8_t completed = evt->evt.gatts_evt.params.hvn_tx_complete.count;
+      if (instance->_pending_writes >= completed) {
+        instance->_pending_writes -= completed;
       } else {
-        BLE_DEBUG_PRINTLN("ERROR: Failed to accept CONN_PARAM_UPDATE_REQUEST: 0x%08X", err_code);
+        instance->_pending_writes = 0;
       }
-      break;
+      BLE_DEBUG_PRINTLN("TX complete: %d, pending now: %d", completed, instance->_pending_writes);
     }
-
-    case BLE_GAP_EVT_CONN_PARAM_UPDATE:
-      BLE_DEBUG_PRINTLN("CONN_PARAM_UPDATE: handle=0x%04X, min_interval=%d, max_interval=%d, latency=%d, timeout=%d",
-                       conn_handle,
-                       evt->evt.gap_evt.params.conn_param_update.conn_params.min_conn_interval,
-                       evt->evt.gap_evt.params.conn_param_update.conn_params.max_conn_interval,
-                       evt->evt.gap_evt.params.conn_param_update.conn_params.slave_latency,
-                       evt->evt.gap_evt.params.conn_param_update.conn_params.conn_sup_timeout);
-      break;
-
-    case BLE_GAP_EVT_PHY_UPDATE_REQUEST: {
-      BLE_DEBUG_PRINTLN("PHY_UPDATE_REQUEST: handle=0x%04X, tx_phys=0x%02X, rx_phys=0x%02X",
-                       conn_handle,
-                       evt->evt.gap_evt.params.phy_update_request.peer_preferred_phys.tx_phys,
-                       evt->evt.gap_evt.params.phy_update_request.peer_preferred_phys.rx_phys);
-      
-      if (!instance->isConnectionHandleValid() || instance->_connectionHandle != conn_handle) {
-        BLE_DEBUG_PRINTLN("WARN: PHY_UPDATE_REQUEST with mismatched handle! Stored=0x%04X, Event=0x%04X",
-                         instance->_connectionHandle, conn_handle);
-        return;
-      }
-      
-      ble_gap_phys_t phy_params = { BLE_GAP_PHY_AUTO, BLE_GAP_PHY_AUTO };
-      uint32_t err_code = sd_ble_gap_phy_update(conn_handle, &phy_params);
-      if (err_code == NRF_SUCCESS) {
-        BLE_DEBUG_PRINTLN("Accepted PHY_UPDATE_REQUEST (AUTO)");
-      } else {
-        BLE_DEBUG_PRINTLN("ERROR: Failed to accept PHY_UPDATE_REQUEST: 0x%08X", err_code);
-      }
-      break;
-    }
-
-    case BLE_GAP_EVT_PHY_UPDATE:
-      BLE_DEBUG_PRINTLN("PHY_UPDATE: handle=0x%04X, status=0x%02X, tx_phy=0x%02X, rx_phy=0x%02X",
-                       conn_handle,
-                       evt->evt.gap_evt.params.phy_update.status,
-                       evt->evt.gap_evt.params.phy_update.tx_phy,
-                       evt->evt.gap_evt.params.phy_update.rx_phy);
-      break;
-
-    case BLE_GAP_EVT_DATA_LENGTH_UPDATE_REQUEST: {
-      BLE_DEBUG_PRINTLN("DATA_LENGTH_UPDATE_REQUEST: handle=0x%04X, max_tx_octets=%d, max_tx_time_us=%d, max_rx_octets=%d, max_rx_time_us=%d",
-                       conn_handle,
-                       evt->evt.gap_evt.params.data_length_update_request.peer_params.max_tx_octets,
-                       evt->evt.gap_evt.params.data_length_update_request.peer_params.max_tx_time_us,
-                       evt->evt.gap_evt.params.data_length_update_request.peer_params.max_rx_octets,
-                       evt->evt.gap_evt.params.data_length_update_request.peer_params.max_rx_time_us);
-      
-      if (!instance->isConnectionHandleValid() || instance->_connectionHandle != conn_handle) {
-        BLE_DEBUG_PRINTLN("WARN: DATA_LENGTH_UPDATE_REQUEST with mismatched handle! Stored=0x%04X, Event=0x%04X",
-                         instance->_connectionHandle, conn_handle);
-        return;
-      }
-      
-      uint32_t err_code = sd_ble_gap_data_length_update(conn_handle, NULL, NULL);
-      if (err_code == NRF_SUCCESS) {
-        BLE_DEBUG_PRINTLN("Accepted DATA_LENGTH_UPDATE_REQUEST (AUTO)");
-      } else {
-        BLE_DEBUG_PRINTLN("ERROR: Failed to accept DATA_LENGTH_UPDATE_REQUEST: 0x%08X", err_code);
-      }
-      break;
-    }
-
-    case BLE_GAP_EVT_DATA_LENGTH_UPDATE:
-      BLE_DEBUG_PRINTLN("DATA_LENGTH_UPDATE: handle=0x%04X, max_tx_octets=%d, max_tx_time_us=%d, max_rx_octets=%d, max_rx_time_us=%d",
-                       conn_handle,
-                       evt->evt.gap_evt.params.data_length_update.effective_params.max_tx_octets,
-                       evt->evt.gap_evt.params.data_length_update.effective_params.max_tx_time_us,
-                       evt->evt.gap_evt.params.data_length_update.effective_params.max_rx_octets,
-                       evt->evt.gap_evt.params.data_length_update.effective_params.max_rx_time_us);
-      break;
-
-    case BLE_GAP_EVT_TIMEOUT:
-      BLE_DEBUG_PRINTLN("GAP_TIMEOUT: handle=0x%04X, src=0x%02X",
-                       conn_handle,
-                       evt->evt.gap_evt.params.timeout.src);
-      break;
-
-    case BLE_GATTS_EVT_TIMEOUT:
-      BLE_DEBUG_PRINTLN("GATTS_TIMEOUT: handle=0x%04X, src=0x%02X",
-                       conn_handle,
-                       evt->evt.gatts_evt.params.timeout.src);
-      break;
-
-    default:
-      #ifdef BLE_DEBUG_LOGGING
-      if (evt->header.evt_id >= BLE_GAP_EVT_BASE && evt->header.evt_id <= BLE_GAP_EVT_LAST) {
-        BLE_DEBUG_PRINTLN("Unhandled GAP event: 0x%02X handle=0x%04X", evt->header.evt_id, conn_handle);
-      }
-      #endif
-      break;
   }
 }
 
@@ -291,9 +119,27 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
   char charpin[20];
   sprintf(charpin, "%d", pin_code);
 
-  Bluefruit.autoConnLed(false);
+  // If we want to control BLE LED ourselves, uncomment this:
+  // Bluefruit.autoConnLed(false);
   Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
   Bluefruit.begin();
+  
+  // Set Peripheral Preferred Connection Parameters (PPCP) for iOS compatibility
+  // iOS reads these during connection and may use them
+  // Min: 15ms (12 × 1.25ms), Max: 30ms (24 × 1.25ms), Latency: 0, Timeout: 2s (200 × 10ms)
+  ble_gap_conn_params_t ppcp_params;
+  ppcp_params.min_conn_interval = 12;   // 15ms
+  ppcp_params.max_conn_interval = 24;   // 30ms
+  ppcp_params.slave_latency = 0;
+  ppcp_params.conn_sup_timeout = 200;   // 2 seconds (Apple minimum recommendation)
+  
+  uint32_t err_code = sd_ble_gap_ppcp_set(&ppcp_params);
+  if (err_code == NRF_SUCCESS) {
+    BLE_DEBUG_PRINTLN("PPCP set: 15-30ms interval, 2s timeout");
+  } else {
+    BLE_DEBUG_PRINTLN("Failed to set PPCP: %lu", err_code);
+  }
+  
   Bluefruit.setTxPower(BLE_TX_POWER);
   Bluefruit.setName(device_name);
 
@@ -323,7 +169,7 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
 
   Bluefruit.ScanResponse.addName();
 
-  Bluefruit.Advertising.restartOnDisconnect(true);
+  Bluefruit.Advertising.restartOnDisconnect(false);  // We'll manually restart after grace period
   Bluefruit.Advertising.setInterval(32, 244);
   Bluefruit.Advertising.setFastTimeout(30);
 
@@ -361,21 +207,14 @@ void SerialBLEInterface::enable() {
   _isEnabled = true;
   clearBuffers();
 
-  Bluefruit.Advertising.restartOnDisconnect(true);
+  Bluefruit.Advertising.restartOnDisconnect(false);  // We'll manually restart after grace period
   startAdv();
 }
 
-// Disconnect all active BLE connections and wait for completion
+// Disconnect active BLE connection (asynchronous - onDisconnect callback handles cleanup)
 void SerialBLEInterface::disconnect() {
-  uint8_t connection_num = Bluefruit.connected();
-  if (connection_num) {
-    for (uint8_t i = 0; i < connection_num; i++) {
-      Bluefruit.disconnect(i);
-    }
-    while (Bluefruit.connected()) {
-      yield();
-    }
-    BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnect completed");
+  if (Bluefruit.connected() > 0) {
+    Bluefruit.disconnect(0);
   }
 }
 
@@ -419,131 +258,24 @@ bool SerialBLEInterface::isWriteBusy() const {
 }
 
 // Process received frames, handle outgoing queue, and manage connection state
-// Handles disconnect timeouts, TX queue draining, write retries, and connection recovery
 // Returns length of received frame, or 0 if no frame available
 size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
-  // Check for disconnect event timeout - if we initiated a disconnect but event didn't arrive
-  if (_disconnect_pending && _disconnect_initiated_time > 0) {
-    unsigned long time_since_disconnect = millis() - _disconnect_initiated_time;
-    if (time_since_disconnect >= DISCONNECT_EVENT_TIMEOUT) {
-      BLE_DEBUG_PRINTLN("Disconnect event timeout - assuming disconnected after %d ms", 
-                       (uint32_t)time_since_disconnect);
-      // Disconnect event didn't arrive - assume we're disconnected
-      _isDeviceConnected = false;
-      _connectionHandle = 0xFFFF;
-      _disconnect_pending = false;
-      _disconnect_initiated_time = 0;
-      _disconnect_waiting_tx_drain = false;
-      _tx_drain_wait_start = 0;
-      _last_disconnect_time = millis();
-      send_queue_len = 0;
-      _pending_writes = 0;
-      _write_retry_count = 0;
-      _first_write_failure_time = 0;
-    }
-  }
-  
-  // Check if we're waiting for TX queue to drain before forcing disconnect
-  if (_disconnect_waiting_tx_drain && _tx_drain_wait_start > 0) {
-    if (_pending_writes == 0) {
-      // TX queue is empty, proceed with disconnect immediately
-      BLE_DEBUG_PRINTLN("TX queue drained, proceeding with forced disconnect");
-      _disconnect_waiting_tx_drain = false;
-      _tx_drain_wait_start = 0;
-      // Proceed with disconnect if connection is valid and rate limit allows
-      if (isConnectionHandleValid()) {
-        unsigned long time_since_last_disconnect = millis() - _last_disconnect_time;
-        if (time_since_last_disconnect >= MIN_DISCONNECT_INTERVAL) {
-          uint32_t err = sd_ble_gap_disconnect(_connectionHandle, BLE_HCI_LOCAL_HOST_TERMINATED_CONNECTION);
-          if (err == NRF_SUCCESS) {
-            _disconnect_initiated_time = millis();
-            _disconnect_pending = true;
-            BLE_DEBUG_PRINTLN("Disconnect initiated after TX drain, waiting for event");
-          } else if (err == NRF_ERROR_NO_MEM) {
-            BLE_DEBUG_PRINTLN("NRF_ERROR_NO_MEM after TX drain - SoftDevice out of memory, clearing state");
-            _isDeviceConnected = false;
-            _connectionHandle = 0xFFFF;
-            _disconnect_pending = false;
-            _disconnect_initiated_time = 0;
-            _last_disconnect_time = millis();
-            send_queue_len = 0;
-            _pending_writes = 0;
-            _write_retry_count = 0;
-            _first_write_failure_time = 0;
-          } else {
-            BLE_DEBUG_PRINTLN("Disconnect failed after TX drain with error: 0x%08X", (uint32_t)err);
-            _isDeviceConnected = false;
-            _connectionHandle = 0xFFFF;
-          }
-        } else {
-          BLE_DEBUG_PRINTLN("Disconnect rate limited after TX drain - waiting %d ms", 
-                           (uint32_t)(MIN_DISCONNECT_INTERVAL - time_since_last_disconnect));
-          _isDeviceConnected = false;
-        }
-      } else {
-        // Invalid handle, just clear state
-        _isDeviceConnected = false;
-        _connectionHandle = 0xFFFF;
-      }
-    } else {
-      // Still waiting for TX queue to drain - check timeout
-      unsigned long time_waiting = millis() - _tx_drain_wait_start;
-      if (time_waiting >= TX_QUEUE_DRAIN_TIMEOUT) {
-        BLE_DEBUG_PRINTLN("TX queue drain timeout after %d ms (pending=%d), forcing disconnect anyway", 
-                         (uint32_t)time_waiting, _pending_writes);
-        _disconnect_waiting_tx_drain = false;
-        _tx_drain_wait_start = 0;
-        // Proceed with disconnect if connection is valid and rate limit allows
-        if (isConnectionHandleValid()) {
-          unsigned long time_since_last_disconnect = millis() - _last_disconnect_time;
-          if (time_since_last_disconnect >= MIN_DISCONNECT_INTERVAL) {
-            uint32_t err = sd_ble_gap_disconnect(_connectionHandle, BLE_HCI_LOCAL_HOST_TERMINATED_CONNECTION);
-            if (err == NRF_SUCCESS) {
-              _disconnect_initiated_time = millis();
-              _disconnect_pending = true;
-              BLE_DEBUG_PRINTLN("Disconnect initiated after TX drain timeout, waiting for event");
-            } else if (err == NRF_ERROR_NO_MEM) {
-              BLE_DEBUG_PRINTLN("NRF_ERROR_NO_MEM after TX drain timeout - SoftDevice out of memory, clearing state");
-              _isDeviceConnected = false;
-              _connectionHandle = 0xFFFF;
-              _disconnect_pending = false;
-              _disconnect_initiated_time = 0;
-              _last_disconnect_time = millis();
-              send_queue_len = 0;
-              _pending_writes = 0;
-              _write_retry_count = 0;
-              _first_write_failure_time = 0;
-            } else {
-              BLE_DEBUG_PRINTLN("Disconnect failed after TX drain timeout with error: 0x%08X", (uint32_t)err);
-              _isDeviceConnected = false;
-              _connectionHandle = 0xFFFF;
-            }
-          } else {
-            BLE_DEBUG_PRINTLN("Disconnect rate limited after TX drain timeout - waiting %d ms", 
-                             (uint32_t)(MIN_DISCONNECT_INTERVAL - time_since_last_disconnect));
-            _isDeviceConnected = false;
-          }
-        } else {
-          // Invalid handle, just clear state
-          _isDeviceConnected = false;
-          _connectionHandle = 0xFFFF;
-        }
-      } else {
-        // Still waiting, don't proceed with disconnect yet
-        BLE_DEBUG_PRINTLN("Waiting for TX queue to drain: pending=%d, waited=%d ms", 
-                         _pending_writes, (uint32_t)time_waiting);
-        // Don't return early - still process RX and other operations
-      }
+  // Check if we need to restart advertising after grace period
+  if (_advRestartPending && _advRestartTime > 0 && _isEnabled) {
+    unsigned long time_since_disconnect = millis() - _advRestartTime;
+    if (time_since_disconnect >= CONNECT_EVENT_GRACE_PERIOD) {
+      BLE_DEBUG_PRINTLN("Grace period expired, restarting advertising");
+      _advRestartPending = false;
+      _advRestartTime = 0;
+      startAdv();
     }
   }
   
   if (send_queue_len > 0 && _pending_writes < MAX_PENDING_WRITES) {
-    if (_isDeviceConnected && isConnectionHandleValid() && bleuart.notifyEnabled(_connectionHandle)) {
+    if (_isDeviceConnected && Bluefruit.connected() > 0) {
       size_t written = bleuart.write(send_queue[0].buf, send_queue[0].len);
       if (written > 0) {
         _pending_writes++;
-        _write_retry_count = 0;  // Reset retry counter on success
-        _first_write_failure_time = 0;  // Reset failure timer on success
         BLE_DEBUG_PRINTLN("writeBytes: sz=%d, hdr=%d, pending=%d",
                          (uint32_t)send_queue[0].len, (uint32_t)send_queue[0].buf[0],
                          _pending_writes);
@@ -553,110 +285,15 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
           send_queue[i] = send_queue[i + 1];
         }
       } else {
-        // Track when write failures started
-        if (_first_write_failure_time == 0) {
-          _first_write_failure_time = millis();
-        }
+        // Write failed - keep frame in queue and try again next time
+        BLE_DEBUG_PRINTLN("writeBytes failed, keeping frame in queue, pending=%d", _pending_writes);
         
-        _write_retry_count++;
-        BLE_DEBUG_PRINTLN("writeBytes failed, retry=%d, pending=%d", _write_retry_count, _pending_writes);
+        // If connection appears invalid, reset _pending_writes since TX completions won't come
+        bool still_valid = _isDeviceConnected && Bluefruit.connected() > 0;
         
-        // Re-check connection validity after failed write using SoftDevice API
-        // Only do expensive validation after failures, not before every write
-        bool still_valid = _isDeviceConnected && 
-                          isConnectionHandleValid() && 
-                          bleuart.notifyEnabled(_connectionHandle);
-        
-        if (still_valid) {
-          // Validate connection handle using SoftDevice API to detect stale handles
-          if (!isValidConnectionHandleSD(_connectionHandle)) {
-            BLE_DEBUG_PRINTLN("Connection handle invalid after write failure");
-            still_valid = false;
-          }
-        }
-        
-        // Check if we've been failing for too long - force disconnect to recover
-        bool failure_timeout = (_first_write_failure_time > 0) && 
-                              (millis() - _first_write_failure_time >= MAX_WRITE_FAILURE_DURATION);
-        
-        // Drop frame after max retries, if connection is invalid, or if failures persist too long
-        if (_write_retry_count >= MAX_WRITE_RETRIES || !still_valid || failure_timeout) {
-          if (failure_timeout) {
-            BLE_DEBUG_PRINTLN("Write failures persisted for %d ms, forcing disconnect", 
-                             (uint32_t)(millis() - _first_write_failure_time));
-            // Force disconnect to recover from bad connection state
-            // Check rate limiting - prevent rapid disconnect/reconnect cycles
-            unsigned long time_since_last_disconnect = millis() - _last_disconnect_time;
-            if (time_since_last_disconnect < MIN_DISCONNECT_INTERVAL) {
-              BLE_DEBUG_PRINTLN("Disconnect rate limited - waiting %d ms", 
-                               (uint32_t)(MIN_DISCONNECT_INTERVAL - time_since_last_disconnect));
-              // Don't disconnect yet, but clear state to prevent further writes
-              _isDeviceConnected = false;
-            } else if (isConnectionHandleValid()) {
-              // Check if TX queue is empty before forcing disconnect
-              // This prevents crashes when disconnecting with pending operations
-              if (_pending_writes > 0 && !_disconnect_waiting_tx_drain) {
-                // TX queue not empty - wait for it to drain first
-                BLE_DEBUG_PRINTLN("TX queue not empty (pending=%d), waiting for drain before disconnect", _pending_writes);
-                _disconnect_waiting_tx_drain = true;
-                _tx_drain_wait_start = millis();
-                // Don't disconnect yet - will be handled in next checkRecvFrame() call
-              } else if (_pending_writes == 0 || (_disconnect_waiting_tx_drain && _tx_drain_wait_start > 0 && 
-                         (millis() - _tx_drain_wait_start >= TX_QUEUE_DRAIN_TIMEOUT || _pending_writes == 0))) {
-                // TX queue is empty or timeout expired - safe to disconnect
-                // Clear wait flags since we're proceeding with disconnect
-                _disconnect_waiting_tx_drain = false;
-                _tx_drain_wait_start = 0;
-                // Use SoftDevice API directly to get error codes
-                uint32_t err = sd_ble_gap_disconnect(_connectionHandle, BLE_HCI_LOCAL_HOST_TERMINATED_CONNECTION);
-                if (err == NRF_SUCCESS) {
-                  _disconnect_initiated_time = millis();
-                  _disconnect_pending = true;
-                  BLE_DEBUG_PRINTLN("Disconnect initiated, waiting for event");
-                } else if (err == NRF_ERROR_NO_MEM) {
-                  BLE_DEBUG_PRINTLN("NRF_ERROR_NO_MEM - SoftDevice out of memory, clearing state");
-                  // SoftDevice is out of memory - force complete state reset
-                  _isDeviceConnected = false;
-                  _connectionHandle = 0xFFFF;
-                  _disconnect_pending = false;
-                  _disconnect_initiated_time = 0;
-                  _last_disconnect_time = millis();
-                  send_queue_len = 0;  // Clear send queue
-                  _pending_writes = 0;  // Clear pending writes
-                  _write_retry_count = 0;
-                  _first_write_failure_time = 0;
-                } else {
-                  BLE_DEBUG_PRINTLN("Disconnect failed with error: 0x%08X", (uint32_t)err);
-                  // Disconnect failed, but clear state anyway
-                  _isDeviceConnected = false;
-                  _connectionHandle = 0xFFFF;
-                }
-              } else {
-                // Still waiting for TX queue to drain - will retry on next checkRecvFrame() call
-                // Don't proceed with disconnect yet
-              }
-            } else {
-              // Invalid handle, just clear state
-              _isDeviceConnected = false;
-              _connectionHandle = 0xFFFF;
-            }
-          }
-          
-          BLE_DEBUG_PRINTLN("Dropping frame after %d failed write attempts (connection_valid=%d, timeout=%d)", 
-                           _write_retry_count, still_valid, failure_timeout);
-          _write_retry_count = 0;
-          _first_write_failure_time = 0;
-          send_queue_len--;
-          for (int i = 0; i < send_queue_len; i++) {
-            send_queue[i] = send_queue[i + 1];
-          }
-          
-          // If connection is invalid, clear connection state
-          if (!still_valid || failure_timeout) {
-            BLE_DEBUG_PRINTLN("Connection invalid, clearing state");
-            _isDeviceConnected = false;
-            _connectionHandle = 0xFFFF;
-          }
+        if (!still_valid && _pending_writes > 0) {
+          BLE_DEBUG_PRINTLN("Resetting stuck _pending_writes=%d due to invalid connection", _pending_writes);
+          _pending_writes = 0;
         }
       }
     }
@@ -686,11 +323,8 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
   return 0;
 }
 
-// Check if device is connected by verifying connection handle and Bluefruit connection state
+// Check if device is connected by verifying connection state
 bool SerialBLEInterface::isConnected() const {
   if (!_isDeviceConnected) return false;
-  if (isConnectionHandleValid()) {
-    return Bluefruit.connected(_connectionHandle);
-  }
-  return false;
+  return Bluefruit.connected() > 0;
 }
