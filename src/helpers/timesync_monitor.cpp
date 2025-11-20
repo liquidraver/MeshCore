@@ -225,8 +225,13 @@ bool TimeSyncMonitor::isTimeGood(uint32_t node_time, uint32_t advertised_time) {
 }
 
 void TimeSyncMonitor::processAdvertisement(const mesh::Packet* packet, const mesh::Identity& id, 
-                                          uint32_t advertised_timestamp, const char* node_name, uint32_t node_current_time) {
+                                          uint32_t advertised_timestamp, const char* node_name, uint32_t node_current_time, uint8_t adv_type) {
     if (!packet || !node_name || strlen(node_name) == 0) {
+        return;
+    }
+    
+    // Only track repeaters, ignore companions (ADV_TYPE_CHAT), room servers, sensors, etc.
+    if (adv_type != ADV_TYPE_REPEATER) {
         return;
     }
     
@@ -394,13 +399,20 @@ bool TimeSyncMonitor::processShameListCommand(BaseChatMesh& mesh, const ContactI
             char* line_start = shame_message;
             char current_msg[256];
             int current_pos = 0;
+            bool is_first_message = true;
             
-            // Start with the header for the first message only
-            strncpy(current_msg, "SHAME 🔔 SYNC YOUR TIME!", sizeof(current_msg) - 1);
-            current_pos = strlen(current_msg);
-            
-            // Process each line
+            // Skip the first line (header) since generateShameListMessage already includes it
             char* line_end = strchr(line_start, '\n');
+            if (line_end != NULL) {
+                line_start = line_end + 1;  // Skip header line
+                
+                // Start with the header for the first message only
+                strncpy(current_msg, "SHAME 🔔 SYNC YOUR TIME!", sizeof(current_msg) - 1);
+                current_pos = strlen(current_msg);
+            }
+            
+            // Process each line (starting from second line - first name)
+            line_end = strchr(line_start, '\n');
             while (line_end != NULL) {
                 int line_len = line_end - line_start;
                 
@@ -428,6 +440,7 @@ bool TimeSyncMonitor::processShameListCommand(BaseChatMesh& mesh, const ContactI
                     // Start new message WITHOUT header (just continuation of names)
                     current_msg[0] = '\0';
                     current_pos = 0;
+                    is_first_message = false;
                 }
                 
                 // Add newline and line content
@@ -440,6 +453,49 @@ bool TimeSyncMonitor::processShameListCommand(BaseChatMesh& mesh, const ContactI
                 // Move to next line
                 line_start = line_end + 1;
                 line_end = strchr(line_start, '\n');
+            }
+            
+            // Handle remaining content (last line without trailing newline)
+            if (*line_start != '\0') {
+                int remaining_len = strlen(line_start);
+                if (remaining_len > 0) {
+                    // Check if adding this would exceed the limit
+                    if (current_pos + 1 + remaining_len > MAX_MESSAGE_LENGTH) {
+                        // Send current message first
+                        if (current_pos > 0) {
+                            current_msg[current_pos] = '\0';
+                            
+                            uint8_t temp[5+MAX_TEXT_LEN+1];
+                            uint32_t timestamp = mesh.getRTCClock()->getCurrentTime();
+                            memcpy(temp, &timestamp, 4);
+                            temp[4] = 0;  // attempt = 0
+                            memcpy(&temp[5], current_msg, strlen(current_msg) + 1);
+                            
+                            mesh::Packet* response_pkt = mesh.createDatagram(PAYLOAD_TYPE_TXT_MSG, from.id, from.shared_secret, temp, 5 + strlen(current_msg));
+                            
+                            if (response_pkt) {
+                                if (from.out_path_len < 0) {
+                                    mesh.sendFlood(response_pkt, MESSAGE_DELAY_MS);
+                                } else {
+                                    mesh.sendDirect(response_pkt, from.out_path, from.out_path_len, MESSAGE_DELAY_MS);
+                                }
+                            }
+                        }
+                        
+                        // Start new message for remaining content
+                        current_msg[0] = '\0';
+                        current_pos = 0;
+                    }
+                    
+                    // Add remaining content
+                    if (current_pos + 1 + remaining_len < (int)sizeof(current_msg) - 1) {
+                        if (current_pos > 0) {
+                            current_msg[current_pos++] = '\n';
+                        }
+                        memcpy(&current_msg[current_pos], line_start, remaining_len);
+                        current_pos += remaining_len;
+                    }
+                }
             }
             
             // Send final message if there's content
@@ -577,12 +633,18 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
                 int current_pos = 0;
                 bool is_first_message = true;
                 
-                // Start with the header for the first message only
-                strncpy(current_msg, "SHAME 🔔 SYNC YOUR TIME!", sizeof(current_msg) - 1);
-                current_pos = strlen(current_msg);
-                
-                // Process each line
+                // Skip the first line (header) since generateShameListMessage already includes it
                 char* line_end = strchr(line_start, '\n');
+                if (line_end != NULL) {
+                    line_start = line_end + 1;  // Skip header line
+                    
+                    // Start with the header for the first message only
+                    strncpy(current_msg, "SHAME 🔔 SYNC YOUR TIME!", sizeof(current_msg) - 1);
+                    current_pos = strlen(current_msg);
+                }
+                
+                // Process each line (starting from second line - first name)
+                line_end = strchr(line_start, '\n');
                 while (line_end != NULL) {
                     int line_len = line_end - line_start;
                     
@@ -608,6 +670,34 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
                     // Move to next line
                     line_start = line_end + 1;
                     line_end = strchr(line_start, '\n');
+                }
+                
+                // Handle remaining content (last line without trailing newline)
+                if (*line_start != '\0') {
+                    int remaining_len = strlen(line_start);
+                    if (remaining_len > 0) {
+                        // Check if adding this would exceed the limit
+                        if (current_pos + 1 + remaining_len > MAX_MESSAGE_LENGTH) {
+                            // Send current message first
+                            if (current_pos > 0) {
+                                current_msg[current_pos] = '\0';
+                                sendShameListMessage(mesh, current_msg, node_name);
+                            }
+                            
+                            // Start new message for remaining content
+                            current_msg[0] = '\0';
+                            current_pos = 0;
+                        }
+                        
+                        // Add remaining content
+                        if (current_pos + 1 + remaining_len < (int)sizeof(current_msg) - 1) {
+                            if (current_pos > 0) {
+                                current_msg[current_pos++] = '\n';
+                            }
+                            memcpy(&current_msg[current_pos], line_start, remaining_len);
+                            current_pos += remaining_len;
+                        }
+                    }
                 }
                 
                 // Send final message if there's content

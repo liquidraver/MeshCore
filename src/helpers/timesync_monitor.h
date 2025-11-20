@@ -2,6 +2,7 @@
 
 #include <Mesh.h>
 #include <helpers/BaseChatMesh.h>
+#include <helpers/AdvertDataHelpers.h>
 
 // Sanity check: Consider time "good" if >= August 9, 2025
 #define TIMESYNC_SANITY_CHECK_EPOCH 1754697600  // 2025-08-09 00:00:00 UTC
@@ -12,7 +13,7 @@ class TimeSyncMonitor {
 public:
     static void begin(void* filesystem = nullptr, const char* storage_path = nullptr);
     static void processAdvertisement(const mesh::Packet* packet, const mesh::Identity& id, 
-                                    uint32_t advertised_timestamp, const char* node_name, uint32_t node_current_time);
+                                    uint32_t advertised_timestamp, const char* node_name, uint32_t node_current_time, uint8_t adv_type);
     static void checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t current_time, const char* node_name);
     static void processDelayedResponses();  // New function to process delayed responses separately
     static void processPendingSaves();

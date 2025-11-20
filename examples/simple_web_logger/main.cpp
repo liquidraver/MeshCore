@@ -694,7 +694,7 @@ protected:
     // Monitor time sync status (only if our node has good time)
     uint32_t our_time = getRTCClock()->getCurrentTime();
     if (our_time >= TIMESYNC_SANITY_CHECK_EPOCH) {
-      TimeSyncMonitor::processAdvertisement(pkt, id, timestamp, parser.getName(), our_time);
+      TimeSyncMonitor::processAdvertisement(pkt, id, timestamp, parser.getName(), our_time, parser.getType());
     }
 #endif
 
@@ -831,15 +831,46 @@ protected:
     }
 #endif
 
-    // Special commands
-    if (strcmp(text, "clock sync") == 0) {  // special text command
+    // Special commands (case insensitive)
+    // Helper function for case-insensitive comparison
+    auto strcasecmp_wrap = [](const char* s1, const char* s2) {
+      while (*s1 && *s2) {
+        char c1 = *s1 >= 'A' && *s1 <= 'Z' ? *s1 + 32 : *s1;
+        char c2 = *s2 >= 'A' && *s2 <= 'Z' ? *s2 + 32 : *s2;
+        if (c1 != c2) return c1 - c2;
+        s1++;
+        s2++;
+      }
+      return *s1 - *s2;
+    };
+    
+    auto memcasecmp_wrap = [](const char* s1, const char* s2, size_t n) {
+      for (size_t i = 0; i < n; i++) {
+        char c1 = s1[i] >= 'A' && s1[i] <= 'Z' ? s1[i] + 32 : s1[i];
+        char c2 = s2[i] >= 'A' && s2[i] <= 'Z' ? s2[i] + 32 : s2[i];
+        if (c1 != c2) return c1 - c2;
+      }
+      return 0;
+    };
+    
+    if (strcasecmp_wrap(text, "clock sync") == 0) {  // special text command
       setClock(sender_timestamp + 1, false);
-    } else if (memcmp(text, "echo ", 5) == 0) {  // special text command
+    } else if (memcasecmp_wrap(text, "echo ", 5) == 0) {  // special text command
       const char* echo = &text[5];
       uint32_t est_timeout;
       last_msg_sent = _ms->getMillis();
+      
+      // If message came via flood, temporarily reset path so response uses flood too (like companion_radio)
+      ContactInfo* from_mutable = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
+      auto save_path_len = from_mutable ? from_mutable->out_path_len : -1;
+      if (from_mutable && pkt->isRouteFlood()) {
+        from_mutable->out_path_len = -1;
+      }
       sendMessage(from, getRTCClock()->getCurrentTime(), 0, echo, expected_ack_crc, est_timeout);
-    } else if (strcmp(text, "start ota") == 0) {  // Admin-only: Start OTA
+      if (from_mutable) {
+        from_mutable->out_path_len = save_path_len;  // restore path
+      }
+    } else if (strcasecmp_wrap(text, "start ota") == 0) {  // Admin-only: Start OTA
       if (isAdmin(from.id.pub_key)) {
         Serial.printf("Authorized OTA request from %s\n", from.name);
         
@@ -859,7 +890,17 @@ protected:
           
           uint32_t est_timeout;
           last_msg_sent = _ms->getMillis();
+          
+          // If message came via flood, temporarily reset path so response uses flood too (like companion_radio)
+          ContactInfo* from_mutable = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
+          auto save_path_len = from_mutable ? from_mutable->out_path_len : -1;
+          if (from_mutable && pkt->isRouteFlood()) {
+            from_mutable->out_path_len = -1;
+          }
           sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
+          if (from_mutable) {
+            from_mutable->out_path_len = save_path_len;  // restore path
+          }
         } else {
           // WiFi not connected
           char response[] = "OTA failed: WiFi not connected";
@@ -867,7 +908,17 @@ protected:
           
           uint32_t est_timeout;
           last_msg_sent = _ms->getMillis();
+          
+          // If message came via flood, temporarily reset path so response uses flood too (like companion_radio)
+          ContactInfo* from_mutable = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
+          auto save_path_len = from_mutable ? from_mutable->out_path_len : -1;
+          if (from_mutable && pkt->isRouteFlood()) {
+            from_mutable->out_path_len = -1;
+          }
           sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
+          if (from_mutable) {
+            from_mutable->out_path_len = save_path_len;  // restore path
+          }
         }
       } else {
         char sender_pubkey_hex[PUB_KEY_SIZE * 2 + 1];
@@ -878,9 +929,19 @@ protected:
         char response[] = "Access denied: Not authorized";
         uint32_t est_timeout;
         last_msg_sent = _ms->getMillis();
+        
+        // If message came via flood, temporarily reset path so response uses flood too (like companion_radio)
+        ContactInfo* from_mutable = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
+        auto save_path_len = from_mutable ? from_mutable->out_path_len : -1;
+        if (from_mutable && pkt->isRouteFlood()) {
+          from_mutable->out_path_len = -1;
+        }
         sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
+        if (from_mutable) {
+          from_mutable->out_path_len = save_path_len;  // restore path
+        }
       }
-    } else if (strcmp(text, "reboot") == 0) {  // Admin-only: Reboot device
+    } else if (strcasecmp_wrap(text, "reboot") == 0) {  // Admin-only: Reboot device
       if (isAdmin(from.id.pub_key)) {
         Serial.printf("Authorized reboot request from %s\n", from.name);
         
@@ -888,7 +949,17 @@ protected:
         char response[] = "Rebooting now...";
         uint32_t est_timeout;
         last_msg_sent = _ms->getMillis();
+        
+        // If message came via flood, temporarily reset path so response uses flood too (like companion_radio)
+        ContactInfo* from_mutable = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
+        auto save_path_len = from_mutable ? from_mutable->out_path_len : -1;
+        if (from_mutable && pkt->isRouteFlood()) {
+          from_mutable->out_path_len = -1;
+        }
         sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
+        if (from_mutable) {
+          from_mutable->out_path_len = save_path_len;  // restore path
+        }
         
         // Give time for message to be sent
         delay(2000);
@@ -904,7 +975,72 @@ protected:
         char response[] = "Access denied: Not authorized";
         uint32_t est_timeout;
         last_msg_sent = _ms->getMillis();
+        
+        // If message came via flood, temporarily reset path so response uses flood too (like companion_radio)
+        ContactInfo* from_mutable = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
+        auto save_path_len = from_mutable ? from_mutable->out_path_len : -1;
+        if (from_mutable && pkt->isRouteFlood()) {
+          from_mutable->out_path_len = -1;
+        }
         sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
+        if (from_mutable) {
+          from_mutable->out_path_len = save_path_len;  // restore path
+        }
+      }
+    } else if (strcasecmp_wrap(text, "clear contacts") == 0) {  // Admin-only: Clear contacts (preserves admins)
+      if (isAdmin(from.id.pub_key)) {
+        Serial.printf("Authorized clear contacts request from %s\n", from.name);
+        
+        int count_before = getNumContacts();
+        resetContacts();
+        curr_recipient = nullptr;
+        if (_fs->exists("/contacts")) {
+          _fs->remove("/contacts");
+        }
+#ifdef TIMESYNC_MONITOR_ENABLED
+        if (_fs->exists("/timesync_good")) {
+          _fs->remove("/timesync_good");
+        }
+#endif
+        
+        // Send response
+        char response[128];
+        sprintf(response, "Contacts cleared: %d removed (admins preserved)", count_before);
+        Serial.printf("   %s\n", response);
+        
+        uint32_t est_timeout;
+        last_msg_sent = _ms->getMillis();
+        
+        // If message came via flood, temporarily reset path so response uses flood too (like companion_radio)
+        ContactInfo* from_mutable = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
+        auto save_path_len = from_mutable ? from_mutable->out_path_len : -1;
+        if (from_mutable && pkt->isRouteFlood()) {
+          from_mutable->out_path_len = -1;
+        }
+        sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
+        if (from_mutable) {
+          from_mutable->out_path_len = save_path_len;  // restore path
+        }
+      } else {
+        char sender_pubkey_hex[PUB_KEY_SIZE * 2 + 1];
+        mesh::Utils::toHex(sender_pubkey_hex, from.id.pub_key, PUB_KEY_SIZE);
+        Serial.printf("Unauthorized clear contacts request from %s (%s)\n", from.name, sender_pubkey_hex);
+        
+        // Send rejection message
+        char response[] = "Access denied: Not authorized";
+        uint32_t est_timeout;
+        last_msg_sent = _ms->getMillis();
+        
+        // If message came via flood, temporarily reset path so response uses flood too (like companion_radio)
+        ContactInfo* from_mutable = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
+        auto save_path_len = from_mutable ? from_mutable->out_path_len : -1;
+        if (from_mutable && pkt->isRouteFlood()) {
+          from_mutable->out_path_len = -1;
+        }
+        sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
+        if (from_mutable) {
+          from_mutable->out_path_len = save_path_len;  // restore path
+        }
       }
     }
   }
