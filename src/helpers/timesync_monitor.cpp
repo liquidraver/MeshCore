@@ -21,7 +21,7 @@ class MyMesh;            // Used in simple_web_logger
 #define DAILY_REPORT_HOUR 9          // UTC time hour (24h format)
 #define DAILY_REPORT_MINUTE 0         // UTC time minute
 #define MESSAGE_DELAY_MS 2000
-#define MAX_MESSAGE_LENGTH 150
+#define MAX_MESSAGE_LENGTH 90
 #define MAX_PACKET_CACHE 50
 #define CACHE_EXPIRE_TIME_MS 60000
 #define CACHE_HASH_SIZE 6
@@ -445,7 +445,9 @@ bool TimeSyncMonitor::processShameListCommand(BaseChatMesh& mesh, const ContactI
                 
                 // Add newline and line content
                 if (current_pos + 1 + line_len < (int)sizeof(current_msg) - 1) {
-                    current_msg[current_pos++] = '\n';
+                    if (current_pos > 0) {
+                        current_msg[current_pos++] = '\n';
+                    }
                     memcpy(&current_msg[current_pos], line_start, line_len);
                     current_pos += line_len;
                 }
@@ -662,7 +664,9 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
                     
                     // Add newline and line content
                     if (current_pos + 1 + line_len < (int)sizeof(current_msg) - 1) {
-                        current_msg[current_pos++] = '\n';
+                        if (current_pos > 0) {
+                            current_msg[current_pos++] = '\n';
+                        }
                         memcpy(&current_msg[current_pos], line_start, line_len);
                         current_pos += line_len;
                     }
