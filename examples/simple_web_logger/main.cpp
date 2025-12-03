@@ -24,6 +24,7 @@
 #include <helpers/IdentityStore.h>
 #include <helpers/pingpong.h>
 #include <helpers/timesync_monitor.h>
+#include <helpers/node_online_monitor.h>
 #include <RTClib.h>
 #include <target.h>
 
@@ -199,6 +200,7 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
   uint32_t expected_ack_crc;
   ChannelDetails* _public;
   ChannelDetails* _ping_channel;
+  ChannelDetails* _hungary_channel;
   unsigned long last_msg_sent;
   ContactInfo* curr_recipient;
   char command[512+10];
@@ -696,6 +698,12 @@ protected:
     if (our_time >= TIMESYNC_SANITY_CHECK_EPOCH) {
       TimeSyncMonitor::processAdvertisement(pkt, id, timestamp, parser.getName(), our_time, parser.getType());
     }
+#endif
+
+#ifdef NODE_ONLINE_MONITOR_ENABLED
+    // Monitor for node online status (Csovympus and Eye of Naszály)
+    uint32_t our_time_monitor = getRTCClock()->getCurrentTime();
+    NodeOnlineMonitor::processAdvertisement(*this, pkt, id, timestamp, parser.getName(), our_time_monitor, _prefs.node_name);
 #endif
 
     uint8_t hash[MAX_HASH_SIZE];
@@ -1315,7 +1323,7 @@ public:
     _public = addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
 
     // Add additional channels
-    addChannel("#hungary", "0q1+QAm3J/tO5cH/UWlOXg==");  // #hungary channel
+    _hungary_channel = addChannel("#hungary", "0q1+QAm3J/tO5cH/UWlOXg==");  // #hungary channel
     addChannel("#austria", "+qpe8BCBIi4xmoIFNXMh9A==");  // #austria channel (hex: faaa5ef01081222e319a8205357321f)
     addChannel("#slovakia", "VQuKlUbVYYMQB0/boDaPmA==");  // #slovakia channel (hex: 550b8a9546d5618310074fdba0368f9)
     _ping_channel = addChannel("#ping", "PK4W/QZ7qcMqmL4i6bmFJQ==");  // #ping channel
@@ -1333,6 +1341,14 @@ public:
     TimeSyncMonitor::begin(_fs, "/timesync_good");
     if (_public) {
       TimeSyncMonitor::setPublicChannel(&_public->channel);
+    }
+#endif
+
+#ifdef NODE_ONLINE_MONITOR_ENABLED
+    // Initialize node online monitor
+    NodeOnlineMonitor::begin();
+    if (_hungary_channel) {
+      NodeOnlineMonitor::setHungaryChannel(&_hungary_channel->channel);
     }
 #endif
     
