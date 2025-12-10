@@ -300,11 +300,16 @@ void TimeSyncMonitor::processAdvertisement(const mesh::Packet* packet, const mes
             state->consecutive_bad_count++;
             
             // Only shame after 2 consecutive bad adverts (prevents false positives)
-            if (state->consecutive_bad_count >= 2) {
+            // Defensive check: only shame if they actually had good time
+            if (state->consecutive_bad_count >= 2 && state->had_good_time) {
                 state->on_shame_list = true;
             }
+        } else {
+            // Never had good time - ensure they're not on shame list
+            // This handles edge cases where state might be corrupted
+            state->on_shame_list = false;
+            state->consecutive_bad_count = 0;
         }
-        // else: never had good time, don't add to shame list yet
     }
     
     // Mark save needed when had_good_time changes (non-blocking)
@@ -524,6 +529,67 @@ bool TimeSyncMonitor::processShameListCommand(BaseChatMesh& mesh, const ContactI
     }
     
     return true;
+}
+
+bool TimeSyncMonitor::processClearCommand(BaseChatMesh& mesh, const ContactInfo& from,
+                                         mesh::Packet* packet, uint32_t sender_timestamp, const char* text) {
+    // Check if this is the clear command (case insensitive)
+    if (strcasecmp(text, "cleartimesync") != 0) {
+        return false;
+    }
+    
+    // Calculate packet hash for deduplication
+    uint8_t packet_hash[MAX_HASH_SIZE];
+    packet->calculatePacketHash(packet_hash);
+    
+    // Check if we already responded to this packet
+    if (hasRespondedToPacket(packet_hash)) {
+        return false;
+    }
+    
+    // Mark packet as responded (prevents duplicates)
+    markPacketResponded(packet_hash);
+    
+    // Clear all timesync data
+    clearAllData();
+    
+    // Send confirmation response
+    char response[128];
+    snprintf(response, sizeof(response), "Timesync data cleared (shame list and database reset)");
+    
+    int text_len = strlen(response);
+    uint8_t temp[5+MAX_TEXT_LEN+1];
+    uint32_t timestamp = mesh.getRTCClock()->getCurrentTime();
+    memcpy(temp, &timestamp, 4);
+    temp[4] = 0;  // attempt = 0
+    memcpy(&temp[5], response, text_len + 1);
+    
+    mesh::Packet* response_pkt = mesh.createDatagram(PAYLOAD_TYPE_TXT_MSG, from.id, from.shared_secret, temp, 5 + text_len);
+    
+    if (response_pkt) {
+        // Send with 2-second delay using MeshCore's built-in system
+        if (from.out_path_len < 0) {
+            mesh.sendFlood(response_pkt, MESSAGE_DELAY_MS);
+        } else {
+            mesh.sendDirect(response_pkt, from.out_path, from.out_path_len, MESSAGE_DELAY_MS);
+        }
+    }
+    
+    return true;
+}
+
+void TimeSyncMonitor::clearAllData() {
+    // Clear all in-memory state
+    memset(repeater_states, 0, sizeof(repeater_states));
+    memset(packet_cache, 0, sizeof(packet_cache));
+    last_report_day = 0;
+    cache_index = 0;
+    save_pending = false;
+    
+    // Delete the persistent storage file if it exists
+    if (fs_instance && fs_instance->exists(fs_storage_path)) {
+        fs_instance->remove(fs_storage_path);
+    }
 }
 
 bool TimeSyncMonitor::generateShameListMessage(char* output_buffer, size_t buffer_size, uint32_t current_time, bool allow_empty) {

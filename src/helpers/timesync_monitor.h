@@ -22,6 +22,9 @@ public:
     static bool generateShameListMessage(char* output_buffer, size_t buffer_size, uint32_t current_time, bool allow_empty = false);
     static bool processShameListCommand(BaseChatMesh& mesh, const ContactInfo& from,
                                        mesh::Packet* packet, uint32_t sender_timestamp, const char* text);
+    static bool processClearCommand(BaseChatMesh& mesh, const ContactInfo& from,
+                                   mesh::Packet* packet, uint32_t sender_timestamp, const char* text);
+    static void clearAllData();
     static void saveGoodTimeList();
     static void loadGoodTimeList();
     

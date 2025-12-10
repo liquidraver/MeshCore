@@ -837,6 +837,10 @@ protected:
     if (TimeSyncMonitor::processShameListCommand(*this, from, pkt, sender_timestamp, text)) {
       return;
     }
+    // Check for timesync clear command
+    if (TimeSyncMonitor::processClearCommand(*this, from, pkt, sender_timestamp, text)) {
+      return;
+    }
 #endif
 
     // Special commands (case insensitive)
@@ -1534,6 +1538,11 @@ public:
       }
 #endif
       Serial.printf("   All contacts cleared. (%d contacts removed)\n", count_before);
+#ifdef TIMESYNC_MONITOR_ENABLED
+    } else if (strcmp(command, "clear timesync") == 0) {
+      TimeSyncMonitor::clearAllData();
+      Serial.println("   Timesync data cleared (shame list and database reset)");
+#endif
     } else if (memcmp(command, "card", 4) == 0) {
       Serial.printf("Hello %s\n", _prefs.node_name);
       auto pkt = createSelfAdvert(_prefs.node_name, _prefs.node_lat, _prefs.node_lon);
@@ -1804,6 +1813,10 @@ public:
       Serial.println("   advert");
       Serial.println("   flood");
       Serial.println("   reset path");
+      Serial.println("   clear contacts");
+#ifdef TIMESYNC_MONITOR_ENABLED
+      Serial.println("   clear timesync");
+#endif
       Serial.println("   public <text>");
       Serial.println("   wifi {ssid|password} {value}");
       Serial.println("   log {url|auth|report|raw} {value}");
