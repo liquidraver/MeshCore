@@ -31,7 +31,7 @@ public:
 private:
     static bool isNodeTimeSynced(uint32_t node_time);
     static bool isTimeGood(uint32_t node_time, uint32_t advertised_time);
-    static void sendShameListMessage(BaseChatMesh& mesh, const char* message, const char* node_name);
+    static void sendShameListMessage(BaseChatMesh& mesh, const char* message, const char* node_name, uint32_t delay_override = 0);
     static bool hasRespondedToPacket(const uint8_t* packet_hash);
     static void markPacketResponded(const uint8_t* packet_hash);
 };

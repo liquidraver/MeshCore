@@ -21,6 +21,7 @@ class MyMesh;            // Used in simple_web_logger
 #define DAILY_REPORT_HOUR 9          // UTC time hour (24h format)
 #define DAILY_REPORT_MINUTE 0         // UTC time minute
 #define MESSAGE_DELAY_MS 2000
+#define SPLIT_MESSAGE_DELAY_MS 5000  // 5 seconds between split messages
 #define MAX_MESSAGE_LENGTH 90
 #define MAX_PACKET_CACHE 50
 #define CACHE_EXPIRE_TIME_MS 60000
@@ -318,15 +319,20 @@ void TimeSyncMonitor::processAdvertisement(const mesh::Packet* packet, const mes
     }
 }
 
-void TimeSyncMonitor::sendShameListMessage(BaseChatMesh& mesh, const char* message, const char* node_name) {
+void TimeSyncMonitor::sendShameListMessage(BaseChatMesh& mesh, const char* message, const char* node_name, uint32_t delay_override) {
     if (!public_channel || !node_name) {
         return;
     }
     
-    // Use staggered delays to prevent simultaneous messages
-    static uint8_t message_counter = 0;
-    uint32_t delay = MESSAGE_DELAY_MS + (message_counter * 1000); // Stagger by 1 second each
-    message_counter = (message_counter + 1) % 10; // Reset after 10 messages
+    // Use delay override if provided, otherwise use staggered delays to prevent simultaneous messages
+    uint32_t delay;
+    if (delay_override > 0) {
+        delay = delay_override;
+    } else {
+        static uint8_t message_counter = 0;
+        delay = MESSAGE_DELAY_MS + (message_counter * 1000); // Stagger by 1 second each
+        message_counter = (message_counter + 1) % 10; // Reset after 10 messages
+    }
     
     // Try to use enhanced channel message sending if available
     // This will be overridden in MyMesh to use retry system
@@ -405,6 +411,7 @@ bool TimeSyncMonitor::processShameListCommand(BaseChatMesh& mesh, const ContactI
             char current_msg[256];
             int current_pos = 0;
             bool is_first_message = true;
+            uint32_t split_delay = MESSAGE_DELAY_MS;  // First message uses normal delay
             
             // Skip the first line (header) since generateShameListMessage already includes it
             char* line_end = strchr(line_start, '\n');
@@ -436,13 +443,15 @@ bool TimeSyncMonitor::processShameListCommand(BaseChatMesh& mesh, const ContactI
                     
                     if (response_pkt) {
                         if (from.out_path_len < 0) {
-                            mesh.sendFlood(response_pkt, MESSAGE_DELAY_MS);
+                            mesh.sendFlood(response_pkt, split_delay);
                         } else {
-                            mesh.sendDirect(response_pkt, from.out_path, from.out_path_len, MESSAGE_DELAY_MS);
+                            mesh.sendDirect(response_pkt, from.out_path, from.out_path_len, split_delay);
                         }
                     }
                     
                     // Start new message WITHOUT header (just continuation of names)
+                    // Add 5 second delay for subsequent messages
+                    split_delay += SPLIT_MESSAGE_DELAY_MS;
                     current_msg[0] = '\0';
                     current_pos = 0;
                     is_first_message = false;
@@ -482,14 +491,16 @@ bool TimeSyncMonitor::processShameListCommand(BaseChatMesh& mesh, const ContactI
                             
                             if (response_pkt) {
                                 if (from.out_path_len < 0) {
-                                    mesh.sendFlood(response_pkt, MESSAGE_DELAY_MS);
+                                    mesh.sendFlood(response_pkt, split_delay);
                                 } else {
-                                    mesh.sendDirect(response_pkt, from.out_path, from.out_path_len, MESSAGE_DELAY_MS);
+                                    mesh.sendDirect(response_pkt, from.out_path, from.out_path_len, split_delay);
                                 }
                             }
                         }
                         
                         // Start new message for remaining content
+                        // Add 5 second delay for subsequent messages
+                        split_delay += SPLIT_MESSAGE_DELAY_MS;
                         current_msg[0] = '\0';
                         current_pos = 0;
                     }
@@ -519,9 +530,9 @@ bool TimeSyncMonitor::processShameListCommand(BaseChatMesh& mesh, const ContactI
                 
                 if (response_pkt) {
                     if (from.out_path_len < 0) {
-                        mesh.sendFlood(response_pkt, MESSAGE_DELAY_MS);
+                        mesh.sendFlood(response_pkt, split_delay);
                     } else {
-                        mesh.sendDirect(response_pkt, from.out_path, from.out_path_len, MESSAGE_DELAY_MS);
+                        mesh.sendDirect(response_pkt, from.out_path, from.out_path_len, split_delay);
                     }
                 }
             }
@@ -700,6 +711,7 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
                 char current_msg[256];
                 int current_pos = 0;
                 bool is_first_message = true;
+                uint32_t split_delay = 0;  // First message uses default staggered delay
                 
                 // Skip the first line (header) since generateShameListMessage already includes it
                 char* line_end = strchr(line_start, '\n');
@@ -720,9 +732,11 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
                     if (current_pos + 1 + line_len > MAX_MESSAGE_LENGTH) {
                         // Send current message and start new one
                         current_msg[current_pos] = '\0';
-                        sendShameListMessage(mesh, current_msg, node_name);
+                        sendShameListMessage(mesh, current_msg, node_name, split_delay);
                         
                         // Start new message WITHOUT header (just the continuation of names)
+                        // Add 5 second delay for subsequent messages
+                        split_delay += SPLIT_MESSAGE_DELAY_MS;
                         current_msg[0] = '\0';
                         current_pos = 0;
                         is_first_message = false;
@@ -751,10 +765,12 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
                             // Send current message first
                             if (current_pos > 0) {
                                 current_msg[current_pos] = '\0';
-                                sendShameListMessage(mesh, current_msg, node_name);
+                                sendShameListMessage(mesh, current_msg, node_name, split_delay);
                             }
                             
                             // Start new message for remaining content
+                            // Add 5 second delay for subsequent messages
+                            split_delay += SPLIT_MESSAGE_DELAY_MS;
                             current_msg[0] = '\0';
                             current_pos = 0;
                         }
@@ -773,7 +789,7 @@ void TimeSyncMonitor::checkAndSendDailyReport(BaseChatMesh& mesh, uint32_t curre
                 // Send final message if there's content
                 if (current_pos > 0) {
                     current_msg[current_pos] = '\0';
-                    sendShameListMessage(mesh, current_msg, node_name);
+                    sendShameListMessage(mesh, current_msg, node_name, split_delay);
                 }
             }
         }

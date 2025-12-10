@@ -21,6 +21,7 @@ static const uint8_t NASZALY_PUB_KEY[32] = {
 #define DOWNTIME_THRESHOLD_SECONDS (26 * 3600)  // 26 hours (accounting for delays)
 #define ONE_MONTH_SECONDS (30 * 24 * 3600)      // 30 days
 #define MESSAGE_DELAY_MS 2000
+#define ADVERT_RECEIVED_DELAY_MS 5000  // 5 seconds delay after advert received before announcing
 
 struct NodeState {
     uint8_t public_key[32];
@@ -104,16 +105,17 @@ void NodeOnlineMonitor::sendOnlineMessage(BaseChatMesh& mesh, const char* bot_no
     
     const char* message = nullptr;
     if (memcmp(pub_key, CSOVYMPUS_PUB_KEY, 32) == 0) {
-        message = "Csóvi online, nemzetközi kommunikáció helyreállítva.";
+        message = "Csóvi online!";
     } else if (memcmp(pub_key, NASZALY_PUB_KEY, 32) == 0) {
-        message = "Naszály online, nemzetközi kommunikáció helyreállítva.";
+        message = "Naszály online!";
     } else {
         return; // Unknown node
     }
     
     // Use staggered delays to prevent simultaneous messages
+    // Add 5 second delay after advert received, then additional stagger
     static uint8_t message_counter = 0;
-    uint32_t delay = MESSAGE_DELAY_MS + (message_counter * 1000);
+    uint32_t delay = ADVERT_RECEIVED_DELAY_MS + MESSAGE_DELAY_MS + (message_counter * 1000);
     message_counter = (message_counter + 1) % 10;
     
     // Try to use enhanced channel message sending if available
