@@ -4,13 +4,13 @@
 
 // Units: interval=1.25ms, timeout=10ms
 #define BLE_MIN_CONN_INTERVAL      12
-#define BLE_MAX_CONN_INTERVAL      24
+#define BLE_MAX_CONN_INTERVAL      36
 #define BLE_SLAVE_LATENCY          4
 #define BLE_CONN_SUP_TIMEOUT       200
 
-// Sync mode: higher throughput
-#define BLE_SYNC_MIN_CONN_INTERVAL   6
-#define BLE_SYNC_MAX_CONN_INTERVAL   12
+// Sync mode: higher throughput (15-30ms for Apple compliance)
+#define BLE_SYNC_MIN_CONN_INTERVAL   12
+#define BLE_SYNC_MAX_CONN_INTERVAL   24
 #define BLE_SYNC_SLAVE_LATENCY       0
 #define BLE_SYNC_CONN_SUP_TIMEOUT    200
 
