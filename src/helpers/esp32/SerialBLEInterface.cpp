@@ -143,7 +143,7 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
 
   pTxCharacteristic = pService->createCharacteristic(
     CHARACTERISTIC_UUID_TX,
-    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ_AUTHEN | NIMBLE_PROPERTY::READ_ENC
   );
   if (!pTxCharacteristic) {
     BLE_DEBUG_PRINTLN("SerialBLEInterface: failed to create TX characteristic");
@@ -152,7 +152,7 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
 
   pRxCharacteristic = pService->createCharacteristic(
     CHARACTERISTIC_UUID_RX,
-    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+    NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR | NIMBLE_PROPERTY::WRITE_AUTHEN | NIMBLE_PROPERTY::WRITE_ENC
   );
   if (!pRxCharacteristic) {
     BLE_DEBUG_PRINTLN("SerialBLEInterface: failed to create RX characteristic");
