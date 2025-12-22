@@ -165,7 +165,6 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
   }
 
   NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
-  pAdvertising->setName(device_name);
   pAdvertising->setConnectableMode(BLE_GAP_CONN_MODE_UND);
   pAdvertising->setDiscoverableMode(BLE_GAP_DISC_MODE_GEN);
   pAdvertising->addTxPower();
@@ -174,6 +173,10 @@ void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
   pAdvertising->setMaxInterval(BLE_ADV_INTERVAL_MAX);
   pAdvertising->setPreferredParams(BLE_MIN_CONN_INTERVAL, BLE_MAX_CONN_INTERVAL);
   pAdvertising->enableScanResponse(true);
+  
+  NimBLEAdvertisementData scanRespData;
+  scanRespData.setName(device_name);
+  pAdvertising->setScanResponseData(scanRespData);
 }
 
 void SerialBLEInterface::clearBuffers() {
