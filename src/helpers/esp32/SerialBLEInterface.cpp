@@ -21,6 +21,7 @@ void SerialBLEInterface::onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& con
       instance->_conn_handle = BLE_CONN_HANDLE_INVALID;
       instance->_isDeviceConnected = false;
       instance->clearBuffers();
+      instance->_last_health_check = millis();
       
       if (instance->_isEnabled) {
         NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
