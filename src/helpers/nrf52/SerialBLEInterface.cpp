@@ -183,6 +183,7 @@ bool SerialBLEInterface::isValidConnection(uint16_t handle, bool requireWaitingF
 bool SerialBLEInterface::isAdvertising() const {
   ble_gap_addr_t adv_addr;
   uint32_t err_code = sd_ble_gap_adv_addr_get(0, &adv_addr);
+  (void)adv_addr;  // Suppress unused variable warning - address not needed, only return code
   return (err_code == NRF_SUCCESS);
 }
 
@@ -244,7 +245,7 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
       bool send_interval_ok = (_last_send_time == 0 || (now - _last_send_time) >= BLE_MIN_SEND_INTERVAL_MS);
 
       if (!throttle_active && send_interval_ok) {
-        SerialBLEFrame frame_to_send = send_queue[0];
+        SerialBLEFrame& frame_to_send = send_queue[0];
 
         size_t written = bleuart.write(frame_to_send.buf, frame_to_send.len);
         if (written == frame_to_send.len) {
@@ -275,8 +276,9 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
   }
   
   if (recv_queue_len > 0) {
-    size_t len = recv_queue[0].len;
-    memcpy(dest, recv_queue[0].buf, len);
+    SerialBLEFrame& frame = recv_queue[0];
+    size_t len = frame.len;
+    memcpy(dest, frame.buf, len);
     
     BLE_DEBUG_PRINTLN("readBytes: sz=%u, hdr=%u", (unsigned)len, (unsigned)dest[0]);
     

@@ -109,8 +109,14 @@ void SerialBLEInterface::onWrite(NimBLECharacteristic* pCharacteristic, NimBLECo
     return;
   }
   
+  const uint8_t* data = val.data();
+  if (data == nullptr && len > 0) {
+    BLE_DEBUG_PRINTLN("onWrite: invalid data pointer");
+    return;
+  }
+  
   instance->recv_queue[instance->recv_queue_len].len = len;
-  memcpy(instance->recv_queue[instance->recv_queue_len].buf, val.data(), len);
+  memcpy(instance->recv_queue[instance->recv_queue_len].buf, data, len);
   instance->recv_queue_len++;
 
   unsigned long now = millis();
@@ -198,11 +204,8 @@ bool SerialBLEInterface::isValidConnection(uint16_t conn_handle, bool requireWai
 }
 
 bool SerialBLEInterface::isAdvertising() const {
-  if (!pServer) {
-    return false;
-  }
   NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
-  return pAdvertising ? pAdvertising->isAdvertising() : false;
+  return pAdvertising && pAdvertising->isAdvertising();
 }
 
 void SerialBLEInterface::enable() {
@@ -275,7 +278,7 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
       bool send_interval_ok = (_last_send_time == 0 || (now - _last_send_time) >= BLE_MIN_SEND_INTERVAL_MS);
 
       if (!throttle_active && send_interval_ok && pTxCharacteristic) {
-        SerialBLEFrame frame_to_send = send_queue[0];
+        SerialBLEFrame& frame_to_send = send_queue[0];
 
         pTxCharacteristic->setValue(frame_to_send.buf, frame_to_send.len);
         bool success = pTxCharacteristic->notify();
@@ -304,8 +307,9 @@ size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
   }
   
   if (recv_queue_len > 0) {
-    size_t len = recv_queue[0].len;
-    memcpy(dest, recv_queue[0].buf, len);
+    SerialBLEFrame& frame = recv_queue[0];
+    size_t len = frame.len;
+    memcpy(dest, frame.buf, len);
     
     BLE_DEBUG_PRINTLN("readBytes: sz=%u, hdr=%u", (unsigned)len, (unsigned)dest[0]);
     

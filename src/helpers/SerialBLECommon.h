@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BaseSerialInterface.h"
+#include <string.h>
 
 // Units: interval=1.25ms, timeout=10ms
 #define BLE_MIN_CONN_INTERVAL      12
@@ -96,8 +97,8 @@ protected:
   void shiftSendQueueLeft() {
     if (send_queue_len > 0) {
       send_queue_len--;
-      for (uint8_t i = 0; i < send_queue_len; i++) {
-        send_queue[i] = send_queue[i + 1];
+      if (send_queue_len > 0) {
+        memmove(&send_queue[0], &send_queue[1], send_queue_len * sizeof(SerialBLEFrame));
       }
     }
   }
@@ -105,8 +106,8 @@ protected:
   void shiftRecvQueueLeft() {
     if (recv_queue_len > 0) {
       recv_queue_len--;
-      for (uint8_t i = 0; i < recv_queue_len; i++) {
-        recv_queue[i] = recv_queue[i + 1];
+      if (recv_queue_len > 0) {
+        memmove(&recv_queue[0], &recv_queue[1], recv_queue_len * sizeof(SerialBLEFrame));
       }
     }
   }
