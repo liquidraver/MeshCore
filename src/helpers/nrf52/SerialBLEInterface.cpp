@@ -17,7 +17,18 @@ void SerialBLEInterface::onConnect(uint16_t connection_handle) {
 }
 
 void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason) {
-  BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected handle=0x%04X reason=%u", connection_handle, reason);
+#if BLE_DEBUG_LOGGING
+  const char* initiator;
+  if (reason == BLE_HCI_LOCAL_HOST_TERMINATED_CONNECTION) {
+    initiator = "local";
+  } else if (reason == BLE_HCI_CONNECTION_TIMEOUT) {
+    initiator = "timeout";
+  } else {
+    initiator = "remote";
+  }
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected handle=0x%04X reason=0x%02X (initiated by %s)", 
+                    connection_handle, reason, initiator);
+#endif
   if (instance) {
     if (instance->_conn_handle == connection_handle) {
       instance->_conn_handle = BLE_CONN_HANDLE_INVALID;
@@ -199,7 +210,7 @@ void SerialBLEInterface::enable() {
 
 void SerialBLEInterface::disconnect() {
   if (_conn_handle != BLE_CONN_HANDLE_INVALID) {
-    sd_ble_gap_disconnect(_conn_handle, BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+    sd_ble_gap_disconnect(_conn_handle, BLE_HCI_LOCAL_HOST_TERMINATED_CONNECTION);
   }
 }
 

@@ -15,7 +15,18 @@ void SerialBLEInterface::onConnect(NimBLEServer* pServer, NimBLEConnInfo& connIn
 }
 
 void SerialBLEInterface::onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) {
-  BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected conn_handle=%d reason=%d", connInfo.getConnHandle(), reason);
+#if BLE_DEBUG_LOGGING
+  const char* initiator;
+  if (reason == 0x16) {
+    initiator = "local";
+  } else if (reason == 0x08) {
+    initiator = "timeout";
+  } else {
+    initiator = "remote";
+  }
+  BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected conn_handle=%d reason=0x%02X (initiated by %s)", 
+                    connInfo.getConnHandle(), reason, initiator);
+#endif
   if (instance) {
     if (instance->_conn_handle == connInfo.getConnHandle()) {
       instance->_conn_handle = BLE_CONN_HANDLE_INVALID;
