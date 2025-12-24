@@ -3,36 +3,32 @@
 #include <stdio.h>
 #include <string.h>
 
-SerialBLEInterface* SerialBLEInterface::instance = nullptr;
-
 void SerialBLEInterface::onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: connected conn_handle=%d", connInfo.getConnHandle());
-  if (instance) {
-    if (pServer->getConnectedCount() > 1) {
-      bool success = pServer->disconnect(connInfo.getConnHandle());
-      if (!success) {
-        BLE_DEBUG_PRINTLN("SerialBLEInterface: failed to disconnect duplicate connection");
-      } else {
-        BLE_DEBUG_PRINTLN("SerialBLEInterface: rejecting duplicate connection, already have %d connections", pServer->getConnectedCount() - 1);
-      }
-      return;
+  if (pServer->getConnectedCount() > 1) {
+    bool success = pServer->disconnect(connInfo.getConnHandle());
+    if (!success) {
+      BLE_DEBUG_PRINTLN("SerialBLEInterface: failed to disconnect duplicate connection");
+    } else {
+      BLE_DEBUG_PRINTLN("SerialBLEInterface: rejecting duplicate connection, already have %d connections", pServer->getConnectedCount() - 1);
     }
-    
-    if (instance->_conn_handle != BLE_CONN_HANDLE_INVALID && 
-        instance->_conn_handle != connInfo.getConnHandle()) {
-      bool success = pServer->disconnect(connInfo.getConnHandle());
-      if (!success) {
-        BLE_DEBUG_PRINTLN("SerialBLEInterface: failed to disconnect duplicate connection");
-      } else {
-        BLE_DEBUG_PRINTLN("SerialBLEInterface: rejecting duplicate connection, already have conn_handle=%d", instance->_conn_handle);
-      }
-      return;
-    }
-    
-    instance->_conn_handle = connInfo.getConnHandle();
-    instance->_isDeviceConnected = false;
-    instance->clearBuffers();
+    return;
   }
+  
+  if (_conn_handle != BLE_CONN_HANDLE_INVALID && 
+      _conn_handle != connInfo.getConnHandle()) {
+    bool success = pServer->disconnect(connInfo.getConnHandle());
+    if (!success) {
+      BLE_DEBUG_PRINTLN("SerialBLEInterface: failed to disconnect duplicate connection");
+    } else {
+      BLE_DEBUG_PRINTLN("SerialBLEInterface: rejecting duplicate connection, already have conn_handle=%d", _conn_handle);
+    }
+    return;
+  }
+  
+  _conn_handle = connInfo.getConnHandle();
+  _isDeviceConnected = false;
+  clearBuffers();
 }
 
 void SerialBLEInterface::onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) {
@@ -48,19 +44,17 @@ void SerialBLEInterface::onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& con
   BLE_DEBUG_PRINTLN("SerialBLEInterface: disconnected conn_handle=%d reason=0x%02X (initiated by %s)", 
                     connInfo.getConnHandle(), reason, initiator);
 #endif
-  if (instance) {
-    if (instance->_conn_handle == connInfo.getConnHandle()) {
-      instance->_conn_handle = BLE_CONN_HANDLE_INVALID;
-      instance->_isDeviceConnected = false;
-      instance->clearBuffers();
-      instance->_last_health_check = millis();
-      
-      if (instance->_isEnabled) {
-        NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
-        if (pAdvertising && !pAdvertising->isAdvertising()) {
-          pAdvertising->start(0);
-          BLE_DEBUG_PRINTLN("SerialBLEInterface: restarting advertising on disconnect");
-        }
+  if (_conn_handle == connInfo.getConnHandle()) {
+    _conn_handle = BLE_CONN_HANDLE_INVALID;
+    _isDeviceConnected = false;
+    clearBuffers();
+    _last_health_check = millis();
+    
+    if (_isEnabled) {
+      NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
+      if (pAdvertising && !pAdvertising->isAdvertising()) {
+        pAdvertising->start(0);
+        BLE_DEBUG_PRINTLN("SerialBLEInterface: restarting advertising on disconnect");
       }
     }
   }
@@ -68,42 +62,40 @@ void SerialBLEInterface::onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& con
 
 void SerialBLEInterface::onAuthenticationComplete(NimBLEConnInfo& connInfo) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: onAuthenticationComplete conn_handle=%d", connInfo.getConnHandle());
-  if (instance) {
-    if (instance->isValidConnection(connInfo.getConnHandle(), true)) {
-      if (!connInfo.isAuthenticated()) {
-        BLE_DEBUG_PRINTLN("SerialBLEInterface: authentication failed, disconnecting");
-        instance->disconnect();
-        return;
-      }
-      
-      BLE_DEBUG_PRINTLN("SerialBLEInterface: authentication successful");
-      instance->_isDeviceConnected = true;
-      
-      if (instance->pServer) {
-        instance->pServer->updateConnParams(connInfo.getConnHandle(),
-                                            BLE_MIN_CONN_INTERVAL,
-                                            BLE_MAX_CONN_INTERVAL,
-                                            BLE_SLAVE_LATENCY,
-                                            BLE_CONN_SUP_TIMEOUT);
-        BLE_DEBUG_PRINTLN("Connection parameter update requested: %u-%ums interval, latency=%u, %ums timeout",
-                         BLE_MIN_CONN_INTERVAL * 5 / 4,
-                         BLE_MAX_CONN_INTERVAL * 5 / 4,
-                         BLE_SLAVE_LATENCY,
-                         BLE_CONN_SUP_TIMEOUT * 10);
-        
-        // Request DLE.
-        extern int ble_gap_set_data_len(uint16_t conn_handle, uint16_t tx_octets, uint16_t tx_time);
-        int err_code = ble_gap_set_data_len(connInfo.getConnHandle(), BLE_DLE_MAX_TX_OCTETS, BLE_DLE_MAX_TX_TIME_US);
-        if (err_code == 0) {
-          BLE_DEBUG_PRINTLN("Data Length Extension requested: max_tx_octets=%u, max_tx_time=%uus",
-                           BLE_DLE_MAX_TX_OCTETS, BLE_DLE_MAX_TX_TIME_US);
-        } else {
-          BLE_DEBUG_PRINTLN("Failed to request Data Length Extension: %d", err_code);
-        }
-      }
-    } else {
-      BLE_DEBUG_PRINTLN("onAuthenticationComplete: ignoring stale/duplicate callback");
+  if (isValidConnection(connInfo.getConnHandle(), true)) {
+    if (!connInfo.isAuthenticated()) {
+      BLE_DEBUG_PRINTLN("SerialBLEInterface: authentication failed, disconnecting");
+      disconnect();
+      return;
     }
+    
+    BLE_DEBUG_PRINTLN("SerialBLEInterface: authentication successful");
+    _isDeviceConnected = true;
+    
+    if (pServer) {
+      pServer->updateConnParams(connInfo.getConnHandle(),
+                                BLE_MIN_CONN_INTERVAL,
+                                BLE_MAX_CONN_INTERVAL,
+                                BLE_SLAVE_LATENCY,
+                                BLE_CONN_SUP_TIMEOUT);
+      BLE_DEBUG_PRINTLN("Connection parameter update requested: %u-%ums interval, latency=%u, %ums timeout",
+                       BLE_MIN_CONN_INTERVAL * 5 / 4,
+                       BLE_MAX_CONN_INTERVAL * 5 / 4,
+                       BLE_SLAVE_LATENCY,
+                       BLE_CONN_SUP_TIMEOUT * 10);
+      
+      // Request DLE.
+      extern int ble_gap_set_data_len(uint16_t conn_handle, uint16_t tx_octets, uint16_t tx_time);
+      int err_code = ble_gap_set_data_len(connInfo.getConnHandle(), BLE_DLE_MAX_TX_OCTETS, BLE_DLE_MAX_TX_TIME_US);
+      if (err_code == 0) {
+        BLE_DEBUG_PRINTLN("Data Length Extension requested: max_tx_octets=%u, max_tx_time=%uus",
+                         BLE_DLE_MAX_TX_OCTETS, BLE_DLE_MAX_TX_TIME_US);
+      } else {
+        BLE_DEBUG_PRINTLN("Failed to request Data Length Extension: %d", err_code);
+      }
+    }
+  } else {
+    BLE_DEBUG_PRINTLN("onAuthenticationComplete: ignoring stale/duplicate callback");
   }
 }
 
@@ -118,25 +110,21 @@ void SerialBLEInterface::onConnParamsUpdate(NimBLEConnInfo& connInfo) {
 }
 
 void SerialBLEInterface::onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) {
-  if (!instance) {
-    return;
-  }
-  
-  if (!instance->isConnected()) {
+  if (!isConnected()) {
     return;
   }
   
   auto val = pCharacteristic->getValue();
   size_t len = val.length();
   
-  BLE_DEBUG_PRINTLN("onWrite: len=%u, queue=%u", (unsigned)len, (unsigned)instance->recv_queue_len);
+  BLE_DEBUG_PRINTLN("onWrite: len=%u, queue=%u", (unsigned)len, (unsigned)recv_queue.size());
   
   if (len > MAX_FRAME_SIZE) {
     BLE_DEBUG_PRINTLN("onWrite: frame too big, len=%u", (unsigned)len);
     return;
   }
   
-  if (instance->recv_queue_len >= FRAME_QUEUE_SIZE) {
+  if (recv_queue.isFull()) {
     BLE_DEBUG_PRINTLN("onWrite: recv queue full, dropping data");
     return;
   }
@@ -147,19 +135,20 @@ void SerialBLEInterface::onWrite(NimBLECharacteristic* pCharacteristic, NimBLECo
     return;
   }
   
-  instance->recv_queue[instance->recv_queue_len].len = len;
-  memcpy(instance->recv_queue[instance->recv_queue_len].buf, data, len);
-  instance->recv_queue_len++;
+  SerialBLEFrame* frame = recv_queue.getWriteSlot();
+  if (frame) {
+    frame->len = len;
+    memcpy(frame->buf, data, len);
+    recv_queue.push();
+  }
 
   unsigned long now = millis();
-  if (instance->noteFrameActivity(now, len)) {
-    instance->requestSyncModeConnection();
+  if (noteFrameActivity(now, len)) {
+    requestSyncModeConnection();
   }
 }
 
 void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
-  instance = this;
-
   NimBLEDevice::init(device_name);
   NimBLEDevice::setSecurityAuth(true, true, true);
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
@@ -285,73 +274,78 @@ size_t SerialBLEInterface::writeFrame(const uint8_t src[], size_t len) {
 
   bool connected = isConnected();
   if (connected && len > 0) {
-    if (send_queue_len >= FRAME_QUEUE_SIZE) {
+    if (send_queue.isFull()) {
       BLE_DEBUG_PRINTLN("writeFrame(), send_queue is full!");
       return 0;
     }
 
-    send_queue[send_queue_len].len = len;
-    memcpy(send_queue[send_queue_len].buf, src, len);
-    send_queue_len++;
-
-    return len;
+    SerialBLEFrame* frame = send_queue.getWriteSlot();
+    if (frame) {
+      frame->len = len;
+      memcpy(frame->buf, src, len);
+      send_queue.push();
+      return len;
+    }
   }
   return 0;
 }
 
 size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
-  if (send_queue_len > 0) {
+  if (!send_queue.isEmpty()) {
     if (!isConnected()) {
       BLE_DEBUG_PRINTLN("writeBytes: connection invalid, clearing send queue");
-      send_queue_len = 0;
+      send_queue.init();
     } else {
       unsigned long now = millis();
       bool throttle_active = (_last_retry_attempt > 0 && (now - _last_retry_attempt) < BLE_RETRY_THROTTLE_MS);
       bool send_interval_ok = (_last_send_time == 0 || (now - _last_send_time) >= BLE_MIN_SEND_INTERVAL_MS);
 
       if (!throttle_active && send_interval_ok && pTxCharacteristic) {
-        SerialBLEFrame& frame_to_send = send_queue[0];
-
-        pTxCharacteristic->setValue(frame_to_send.buf, frame_to_send.len);
-        bool success = pTxCharacteristic->notify();
-        
-        if (success) {
-          BLE_DEBUG_PRINTLN("writeBytes: sz=%u, hdr=%u", (unsigned)frame_to_send.len, (unsigned)frame_to_send.buf[0]);
-          _last_retry_attempt = 0;
-          _last_send_time = now;
-          if (noteFrameActivity(now, frame_to_send.len)) {
-            requestSyncModeConnection();
-          }
-          shiftSendQueueLeft();
-        } else {
-          if (!isConnected()) {
-            BLE_DEBUG_PRINTLN("writeBytes failed: connection lost, dropping frame");
+        SerialBLEFrame* frame_to_send = send_queue.peekFront();
+        if (frame_to_send) {
+          pTxCharacteristic->setValue(frame_to_send->buf, frame_to_send->len);
+          bool success = pTxCharacteristic->notify();
+          
+          if (success) {
+            BLE_DEBUG_PRINTLN("writeBytes: sz=%u, hdr=%u", (unsigned)frame_to_send->len, (unsigned)frame_to_send->buf[0]);
             _last_retry_attempt = 0;
-            _last_send_time = 0;
-            shiftSendQueueLeft();
+            _last_send_time = now;
+            if (noteFrameActivity(now, frame_to_send->len)) {
+              requestSyncModeConnection();
+            }
+            popSendQueue();
           } else {
-            BLE_DEBUG_PRINTLN("writeBytes failed (buffer full), keeping frame for retry, queue=%u", (unsigned)send_queue_len);
-            _last_retry_attempt = now;
+            if (!isConnected()) {
+              BLE_DEBUG_PRINTLN("writeBytes failed: connection lost, dropping frame");
+              _last_retry_attempt = 0;
+              _last_send_time = 0;
+              popSendQueue();
+            } else {
+              BLE_DEBUG_PRINTLN("writeBytes failed (buffer full), keeping frame for retry, queue=%u", (unsigned)send_queue.size());
+              _last_retry_attempt = now;
+            }
           }
         }
       }
     }
   }
   
-  if (recv_queue_len > 0) {
-    SerialBLEFrame& frame = recv_queue[0];
-    size_t len = frame.len;
-    memcpy(dest, frame.buf, len);
-    
-    BLE_DEBUG_PRINTLN("readBytes: sz=%u, hdr=%u", (unsigned)len, (unsigned)dest[0]);
-    
-    shiftRecvQueueLeft();
-    return len;
+  if (!recv_queue.isEmpty()) {
+    SerialBLEFrame* frame = recv_queue.peekFront();
+    if (frame) {
+      size_t len = frame->len;
+      memcpy(dest, frame->buf, len);
+      
+      BLE_DEBUG_PRINTLN("readBytes: sz=%u, hdr=%u", (unsigned)len, (unsigned)dest[0]);
+      
+      popRecvQueue();
+      return len;
+    }
   }
   
   unsigned long now = millis();
   if (isConnected() && _sync_mode && _last_activity_time > 0 && 
-      send_queue_len == 0 && recv_queue_len == 0) {
+      send_queue.isEmpty() && recv_queue.isEmpty()) {
     if (now - _last_activity_time >= BLE_SYNC_INACTIVITY_TIMEOUT_MS) {
       requestDefaultConnection();
     }
@@ -415,7 +409,7 @@ void SerialBLEInterface::requestDefaultConnection() {
     return;
   }
   
-  if (send_queue_len > 0 || recv_queue_len > 0) {
+  if (!send_queue.isEmpty() || !recv_queue.isEmpty()) {
     return;
   }
   

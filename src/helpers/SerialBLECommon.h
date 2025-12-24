@@ -55,6 +55,55 @@ struct SerialBLEFrame {
 
 #define FRAME_QUEUE_SIZE  12
 
+struct CircularFrameQueue {
+  SerialBLEFrame frames[FRAME_QUEUE_SIZE];
+  uint8_t head;   // Write index (next position to write)
+  uint8_t tail;   // Read index (next position to read)
+  uint8_t count;  // Current number of frames in queue
+
+  void init() {
+    head = 0;
+    tail = 0;
+    count = 0;
+  }
+
+  bool isEmpty() const {
+    return count == 0;
+  }
+
+  bool isFull() const {
+    return count >= FRAME_QUEUE_SIZE;
+  }
+
+  SerialBLEFrame* peekFront() {
+    if (isEmpty()) return nullptr;
+    return &frames[tail];
+  }
+
+  SerialBLEFrame* getWriteSlot() {
+    if (isFull()) return nullptr;
+    return &frames[head];
+  }
+
+  void push() {
+    if (!isFull()) {
+      head = (head + 1) % FRAME_QUEUE_SIZE;
+      count++;
+    }
+  }
+
+  void pop() {
+    if (!isEmpty()) {
+      tail = (tail + 1) % FRAME_QUEUE_SIZE;
+      count--;
+    }
+  }
+
+  uint8_t size() const {
+    return count;
+  }
+};
+
 #if BLE_DEBUG_LOGGING && ARDUINO
   #include <Arduino.h>
   #define BLE_DEBUG_PRINT(F, ...) Serial.printf("BLE: " F, ##__VA_ARGS__)
@@ -77,15 +126,12 @@ protected:
   uint8_t _large_frame_count;
   unsigned long _large_frame_window_start;
 
-  uint8_t send_queue_len;
-  SerialBLEFrame send_queue[FRAME_QUEUE_SIZE];
-  
-  uint8_t recv_queue_len;
-  SerialBLEFrame recv_queue[FRAME_QUEUE_SIZE];
+  CircularFrameQueue send_queue;
+  CircularFrameQueue recv_queue;
 
   void clearTransferState() {
-    send_queue_len = 0;
-    recv_queue_len = 0;
+    send_queue.init();
+    recv_queue.init();
     _last_retry_attempt = 0;
     _last_send_time = 0;
     _last_activity_time = 0;
@@ -94,22 +140,12 @@ protected:
     _large_frame_window_start = 0;
   }
 
-  void shiftSendQueueLeft() {
-    if (send_queue_len > 0) {
-      send_queue_len--;
-      if (send_queue_len > 0) {
-        memmove(&send_queue[0], &send_queue[1], send_queue_len * sizeof(SerialBLEFrame));
-      }
-    }
+  void popSendQueue() {
+    send_queue.pop();
   }
 
-  void shiftRecvQueueLeft() {
-    if (recv_queue_len > 0) {
-      recv_queue_len--;
-      if (recv_queue_len > 0) {
-        memmove(&recv_queue[0], &recv_queue[1], recv_queue_len * sizeof(SerialBLEFrame));
-      }
-    }
+  void popRecvQueue() {
+    recv_queue.pop();
   }
 
   bool noteFrameActivity(unsigned long now, size_t frame_len) {
@@ -131,7 +167,7 @@ protected:
   }
 
   bool isWriteBusyCommon() const {
-    return send_queue_len >= (FRAME_QUEUE_SIZE * 2 / 3);
+    return send_queue.size() >= (FRAME_QUEUE_SIZE * 2 / 3);
   }
 
   void initCommonState() {
@@ -145,8 +181,8 @@ protected:
     _sync_mode = false;
     _large_frame_count = 0;
     _large_frame_window_start = 0;
-    send_queue_len = 0;
-    recv_queue_len = 0;
+    send_queue.init();
+    recv_queue.init();
   }
 };
 

@@ -12,8 +12,6 @@ class SerialBLEInterface : public SerialBLEInterfaceBase,
   NimBLEService* pService;
   NimBLECharacteristic* pTxCharacteristic;
   NimBLECharacteristic* pRxCharacteristic;
-  
-  static SerialBLEInterface* instance;
 
   void clearBuffers();
   bool isValidConnection(uint16_t conn_handle, bool requireWaitingForSecurity = false) const;

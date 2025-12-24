@@ -252,75 +252,80 @@ size_t SerialBLEInterface::writeFrame(const uint8_t src[], size_t len) {
 
   bool connected = isConnected();
   if (connected && len > 0) {
-    if (send_queue_len >= FRAME_QUEUE_SIZE) {
+    if (send_queue.isFull()) {
       BLE_DEBUG_PRINTLN("writeFrame(), send_queue is full!");
       return 0;
     }
 
-    send_queue[send_queue_len].len = len;
-    memcpy(send_queue[send_queue_len].buf, src, len);
-    send_queue_len++;
-    
-    return len;
+    SerialBLEFrame* frame = send_queue.getWriteSlot();
+    if (frame) {
+      frame->len = len;
+      memcpy(frame->buf, src, len);
+      send_queue.push();
+      return len;
+    }
   }
   return 0;
 }
 
 size_t SerialBLEInterface::checkRecvFrame(uint8_t dest[]) {
-  if (send_queue_len > 0) {
+  if (!send_queue.isEmpty()) {
     if (!isConnected()) {
       BLE_DEBUG_PRINTLN("writeBytes: connection invalid, clearing send queue");
-      send_queue_len = 0;
+      send_queue.init();
     } else {
       unsigned long now = millis();
       bool throttle_active = (_last_retry_attempt > 0 && (now - _last_retry_attempt) < BLE_RETRY_THROTTLE_MS);
       bool send_interval_ok = (_last_send_time == 0 || (now - _last_send_time) >= BLE_MIN_SEND_INTERVAL_MS);
 
       if (!throttle_active && send_interval_ok) {
-        SerialBLEFrame& frame_to_send = send_queue[0];
-
-        size_t written = bleuart.write(frame_to_send.buf, frame_to_send.len);
-        if (written == frame_to_send.len) {
-          BLE_DEBUG_PRINTLN("writeBytes: sz=%u, hdr=%u", (unsigned)frame_to_send.len, (unsigned)frame_to_send.buf[0]);
-          _last_retry_attempt = 0;
-          _last_send_time = now;
-          if (noteFrameActivity(now, frame_to_send.len)) {
-            requestSyncModeConnection();
-          }
-          shiftSendQueueLeft();
-        } else if (written > 0) {
-          BLE_DEBUG_PRINTLN("writeBytes: partial write, sent=%u of %u, dropping corrupted frame", (unsigned)written, (unsigned)frame_to_send.len);
-          _last_retry_attempt = 0;
-          _last_send_time = now;
-          shiftSendQueueLeft();
-        } else {
-          if (!isConnected()) {
-            BLE_DEBUG_PRINTLN("writeBytes failed: connection lost, dropping frame");
+        SerialBLEFrame* frame_to_send = send_queue.peekFront();
+        if (frame_to_send) {
+          size_t written = bleuart.write(frame_to_send->buf, frame_to_send->len);
+          if (written == frame_to_send->len) {
+            BLE_DEBUG_PRINTLN("writeBytes: sz=%u, hdr=%u", (unsigned)frame_to_send->len, (unsigned)frame_to_send->buf[0]);
             _last_retry_attempt = 0;
-            shiftSendQueueLeft();
+            _last_send_time = now;
+            if (noteFrameActivity(now, frame_to_send->len)) {
+              requestSyncModeConnection();
+            }
+            popSendQueue();
+          } else if (written > 0) {
+            BLE_DEBUG_PRINTLN("writeBytes: partial write, sent=%u of %u, dropping corrupted frame", (unsigned)written, (unsigned)frame_to_send->len);
+            _last_retry_attempt = 0;
+            _last_send_time = now;
+            popSendQueue();
           } else {
-            BLE_DEBUG_PRINTLN("writeBytes failed (buffer full), keeping frame for retry");
-            _last_retry_attempt = now;
+            if (!isConnected()) {
+              BLE_DEBUG_PRINTLN("writeBytes failed: connection lost, dropping frame");
+              _last_retry_attempt = 0;
+              popSendQueue();
+            } else {
+              BLE_DEBUG_PRINTLN("writeBytes failed (buffer full), keeping frame for retry");
+              _last_retry_attempt = now;
+            }
           }
         }
       }
     }
   }
   
-  if (recv_queue_len > 0) {
-    SerialBLEFrame& frame = recv_queue[0];
-    size_t len = frame.len;
-    memcpy(dest, frame.buf, len);
-    
-    BLE_DEBUG_PRINTLN("readBytes: sz=%u, hdr=%u", (unsigned)len, (unsigned)dest[0]);
-    
-    shiftRecvQueueLeft();
-    return len;
+  if (!recv_queue.isEmpty()) {
+    SerialBLEFrame* frame = recv_queue.peekFront();
+    if (frame) {
+      size_t len = frame->len;
+      memcpy(dest, frame->buf, len);
+      
+      BLE_DEBUG_PRINTLN("readBytes: sz=%u, hdr=%u", (unsigned)len, (unsigned)dest[0]);
+      
+      popRecvQueue();
+      return len;
+    }
   }
   
   unsigned long now = millis();
   if (isConnected() && _sync_mode && _last_activity_time > 0 && 
-      send_queue_len == 0 && recv_queue_len == 0) {
+      send_queue.isEmpty() && recv_queue.isEmpty()) {
     if (now - _last_activity_time >= BLE_SYNC_INACTIVITY_TIMEOUT_MS) {
       requestDefaultConnection();
     }
@@ -353,7 +358,7 @@ void SerialBLEInterface::onBleUartRX(uint16_t conn_handle) {
   }
   
   while (instance->bleuart.available() > 0) {
-    if (instance->recv_queue_len >= FRAME_QUEUE_SIZE) {
+    if (instance->recv_queue.isFull()) {
       while (instance->bleuart.available() > 0) {
         instance->bleuart.read();
       }
@@ -374,13 +379,16 @@ void SerialBLEInterface::onBleUartRX(uint16_t conn_handle) {
     }
     
     int read_len = avail;
-    instance->recv_queue[instance->recv_queue_len].len = read_len;
-    instance->bleuart.readBytes(instance->recv_queue[instance->recv_queue_len].buf, read_len);
-    instance->recv_queue_len++;
+    SerialBLEFrame* frame = instance->recv_queue.getWriteSlot();
+    if (frame) {
+      frame->len = read_len;
+      instance->bleuart.readBytes(frame->buf, read_len);
+      instance->recv_queue.push();
 
-    unsigned long now = millis();
-    if (instance->noteFrameActivity(now, read_len)) {
-      instance->requestSyncModeConnection();
+      unsigned long now = millis();
+      if (instance->noteFrameActivity(now, read_len)) {
+        instance->requestSyncModeConnection();
+      }
     }
   }
 }
@@ -432,7 +440,7 @@ void SerialBLEInterface::requestDefaultConnection() {
     return;
   }
   
-  if (send_queue_len > 0 || recv_queue_len > 0) {
+  if (!send_queue.isEmpty() || !recv_queue.isEmpty()) {
     return;
   }
   
