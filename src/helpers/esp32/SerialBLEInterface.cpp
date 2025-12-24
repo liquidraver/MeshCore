@@ -8,6 +8,27 @@ SerialBLEInterface* SerialBLEInterface::instance = nullptr;
 void SerialBLEInterface::onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: connected conn_handle=%d", connInfo.getConnHandle());
   if (instance) {
+    if (pServer->getConnectedCount() > 1) {
+      bool success = pServer->disconnect(connInfo.getConnHandle());
+      if (!success) {
+        BLE_DEBUG_PRINTLN("SerialBLEInterface: failed to disconnect duplicate connection");
+      } else {
+        BLE_DEBUG_PRINTLN("SerialBLEInterface: rejecting duplicate connection, already have %d connections", pServer->getConnectedCount() - 1);
+      }
+      return;
+    }
+    
+    if (instance->_conn_handle != BLE_CONN_HANDLE_INVALID && 
+        instance->_conn_handle != connInfo.getConnHandle()) {
+      bool success = pServer->disconnect(connInfo.getConnHandle());
+      if (!success) {
+        BLE_DEBUG_PRINTLN("SerialBLEInterface: failed to disconnect duplicate connection");
+      } else {
+        BLE_DEBUG_PRINTLN("SerialBLEInterface: rejecting duplicate connection, already have conn_handle=%d", instance->_conn_handle);
+      }
+      return;
+    }
+    
     instance->_conn_handle = connInfo.getConnHandle();
     instance->_isDeviceConnected = false;
     instance->clearBuffers();

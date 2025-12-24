@@ -10,6 +10,27 @@ SerialBLEInterface* SerialBLEInterface::instance = nullptr;
 void SerialBLEInterface::onConnect(uint16_t connection_handle) {
   BLE_DEBUG_PRINTLN("SerialBLEInterface: connected handle=0x%04X", connection_handle);
   if (instance) {
+    if (Bluefruit.connected() > 1) {
+      uint32_t err_code = sd_ble_gap_disconnect(connection_handle, BLE_HCI_LOCAL_HOST_TERMINATED_CONNECTION);
+      if (err_code != NRF_SUCCESS) {
+        BLE_DEBUG_PRINTLN("SerialBLEInterface: failed to disconnect duplicate connection: 0x%08lX", err_code);
+      } else {
+        BLE_DEBUG_PRINTLN("SerialBLEInterface: rejecting duplicate connection, already have %d connections", Bluefruit.connected() - 1);
+      }
+      return;
+    }
+    
+    if (instance->_conn_handle != BLE_CONN_HANDLE_INVALID && 
+        instance->_conn_handle != connection_handle) {
+      uint32_t err_code = sd_ble_gap_disconnect(connection_handle, BLE_HCI_LOCAL_HOST_TERMINATED_CONNECTION);
+      if (err_code != NRF_SUCCESS) {
+        BLE_DEBUG_PRINTLN("SerialBLEInterface: failed to disconnect duplicate connection: 0x%08lX", err_code);
+      } else {
+        BLE_DEBUG_PRINTLN("SerialBLEInterface: rejecting duplicate connection, already have handle=0x%04X", instance->_conn_handle);
+      }
+      return;
+    }
+    
     instance->_conn_handle = connection_handle;
     instance->_isDeviceConnected = false;
     instance->clearBuffers();
