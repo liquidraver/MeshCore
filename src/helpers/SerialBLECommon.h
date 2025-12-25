@@ -6,20 +6,20 @@
 // Units: interval=1.25ms, timeout=10ms
 #define BLE_MIN_CONN_INTERVAL      12
 #define BLE_MAX_CONN_INTERVAL      36
-#define BLE_SLAVE_LATENCY          4
-#define BLE_CONN_SUP_TIMEOUT       200
+#define BLE_SLAVE_LATENCY          3
+#define BLE_CONN_SUP_TIMEOUT       500
 
 // Sync mode: higher throughput (15-30ms for Apple compliance)
 #define BLE_SYNC_MIN_CONN_INTERVAL   12
 #define BLE_SYNC_MAX_CONN_INTERVAL   24
 #define BLE_SYNC_SLAVE_LATENCY       0
-#define BLE_SYNC_CONN_SUP_TIMEOUT    200
+#define BLE_SYNC_CONN_SUP_TIMEOUT    300
 
 #define BLE_SYNC_INACTIVITY_TIMEOUT_MS  5000
 
 // Units: advertising interval=0.625ms
 #define BLE_ADV_INTERVAL_MIN       32
-#define BLE_ADV_INTERVAL_MAX       244
+#define BLE_ADV_INTERVAL_MAX       338
 #define BLE_ADV_FAST_TIMEOUT       30
 
 #define BLE_HEALTH_CHECK_INTERVAL  10000
