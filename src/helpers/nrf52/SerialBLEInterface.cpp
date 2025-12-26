@@ -114,19 +114,19 @@ void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
       BLE_DEBUG_PRINTLN("CONN_PARAM_UPDATE: handle=0x%04X, min_interval=%u, max_interval=%u, latency=%u, timeout=%u",
                        conn_handle, min_interval, max_interval, latency, timeout);
       
-      if (min_interval == BLE_SYNC_MIN_CONN_INTERVAL &&
-          max_interval == BLE_SYNC_MAX_CONN_INTERVAL &&
-          latency == BLE_SYNC_SLAVE_LATENCY &&
-          timeout == BLE_SYNC_CONN_SUP_TIMEOUT) {
+      if (latency == BLE_SYNC_SLAVE_LATENCY &&
+          timeout == BLE_SYNC_CONN_SUP_TIMEOUT &&
+          min_interval >= BLE_SYNC_MIN_CONN_INTERVAL &&
+          max_interval <= BLE_SYNC_MAX_CONN_INTERVAL) {
         if (!instance->_sync_mode) {
           BLE_DEBUG_PRINTLN("Sync mode confirmed by connection parameters");
           instance->_sync_mode = true;
           instance->_last_activity_time = millis();
         }
-      } else if (min_interval == BLE_MIN_CONN_INTERVAL &&
-                 max_interval == BLE_MAX_CONN_INTERVAL &&
-                 latency == BLE_SLAVE_LATENCY &&
-                 timeout == BLE_CONN_SUP_TIMEOUT) {
+      } else if (latency == BLE_SLAVE_LATENCY &&
+                 timeout == BLE_CONN_SUP_TIMEOUT &&
+                 min_interval >= BLE_MIN_CONN_INTERVAL &&
+                 max_interval <= BLE_MAX_CONN_INTERVAL) {
         if (instance->_sync_mode) {
           BLE_DEBUG_PRINTLN("Default mode confirmed by connection parameters");
           instance->_sync_mode = false;
