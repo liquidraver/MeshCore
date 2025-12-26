@@ -149,11 +149,11 @@ protected:
   }
 
   bool noteFrameActivity(unsigned long now, size_t frame_len) {
-    _last_activity_time = now;
-
     if (frame_len < BLE_SYNC_FRAME_SIZE_THRESHOLD) {
       return false;
     }
+
+    _last_activity_time = now;
 
     if (_large_frame_window_start == 0 ||
         (now - _large_frame_window_start) > BLE_SYNC_LARGE_FRAME_WINDOW_MS) {
