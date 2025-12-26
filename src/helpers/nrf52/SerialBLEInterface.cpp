@@ -114,6 +114,8 @@ void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
       BLE_DEBUG_PRINTLN("CONN_PARAM_UPDATE: handle=0x%04X, min_interval=%u, max_interval=%u, latency=%u, timeout=%u",
                        conn_handle, min_interval, max_interval, latency, timeout);
       
+      instance->_conn_param_update_pending = false;
+      
       if (latency == BLE_SYNC_SLAVE_LATENCY &&
           timeout == BLE_SYNC_CONN_SUP_TIMEOUT &&
           min_interval >= BLE_SYNC_MIN_CONN_INTERVAL &&
@@ -430,6 +432,10 @@ void SerialBLEInterface::requestSyncModeConnection() {
     return;
   }
   
+  if (_conn_param_update_pending) {
+    return;
+  }
+  
   BLE_DEBUG_PRINTLN("Requesting sync mode connection: %u-%ums interval, latency=%u, %ums timeout",
                    BLE_SYNC_MIN_CONN_INTERVAL * 5 / 4,
                    BLE_SYNC_MAX_CONN_INTERVAL * 5 / 4,
@@ -444,7 +450,10 @@ void SerialBLEInterface::requestSyncModeConnection() {
   
   uint32_t err_code = sd_ble_gap_conn_param_update(_conn_handle, &conn_params);
   if (err_code == NRF_SUCCESS) {
+    _conn_param_update_pending = true;
     BLE_DEBUG_PRINTLN("Sync mode connection parameter update requested successfully");
+  } else if (err_code == NRF_ERROR_BUSY) {
+    _conn_param_update_pending = true;
   } else {
     BLE_DEBUG_PRINTLN("Failed to request sync mode connection: %lu", err_code);
   }
@@ -463,6 +472,10 @@ void SerialBLEInterface::requestDefaultConnection() {
     return;
   }
   
+  if (_conn_param_update_pending) {
+    return;
+  }
+  
   BLE_DEBUG_PRINTLN("Requesting default connection: %u-%ums interval, latency=%u, %ums timeout",
                    BLE_MIN_CONN_INTERVAL * 5 / 4,
                    BLE_MAX_CONN_INTERVAL * 5 / 4,
@@ -477,7 +490,10 @@ void SerialBLEInterface::requestDefaultConnection() {
   
   uint32_t err_code = sd_ble_gap_conn_param_update(_conn_handle, &conn_params);
   if (err_code == NRF_SUCCESS) {
+    _conn_param_update_pending = true;
     BLE_DEBUG_PRINTLN("Default connection parameter update requested successfully");
+  } else if (err_code == NRF_ERROR_BUSY) {
+    _conn_param_update_pending = true;
   } else {
     BLE_DEBUG_PRINTLN("Failed to request default connection: %lu", err_code);
   }

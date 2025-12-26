@@ -123,6 +123,7 @@ protected:
   unsigned long _last_send_time;
   unsigned long _last_activity_time;
   bool _sync_mode;
+  bool _conn_param_update_pending;
   uint8_t _large_frame_count;
   unsigned long _large_frame_window_start;
 
@@ -136,6 +137,7 @@ protected:
     _last_send_time = 0;
     _last_activity_time = 0;
     _sync_mode = false;
+    _conn_param_update_pending = false;
     _large_frame_count = 0;
     _large_frame_window_start = 0;
   }
