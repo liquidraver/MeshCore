@@ -114,8 +114,6 @@ void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
       BLE_DEBUG_PRINTLN("CONN_PARAM_UPDATE: handle=0x%04X, min_interval=%u, max_interval=%u, latency=%u, timeout=%u",
                        conn_handle, min_interval, max_interval, latency, timeout);
       
-      instance->_conn_param_update_pending = false;
-      
       if (latency == BLE_SYNC_SLAVE_LATENCY &&
           timeout == BLE_SYNC_CONN_SUP_TIMEOUT &&
           min_interval >= BLE_SYNC_MIN_CONN_INTERVAL &&
@@ -134,6 +132,9 @@ void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
           instance->_sync_mode = false;
         }
       }
+      
+      // Clear flag after processing the update to prevent race conditions
+      instance->_conn_param_update_pending = false;
     }
   } else if (evt->header.evt_id == BLE_GAP_EVT_CONN_PARAM_UPDATE_REQUEST) {
     uint16_t conn_handle = evt->evt.gap_evt.conn_handle;

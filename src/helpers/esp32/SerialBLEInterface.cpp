@@ -101,8 +101,6 @@ void SerialBLEInterface::onConnParamsUpdate(NimBLEConnInfo& connInfo) {
     return;
   }
   
-  _conn_param_update_pending = false;
-  
   uint16_t interval = connInfo.getConnInterval();
   uint16_t latency = connInfo.getConnLatency();
   uint16_t timeout = connInfo.getConnTimeout();
@@ -125,6 +123,9 @@ void SerialBLEInterface::onConnParamsUpdate(NimBLEConnInfo& connInfo) {
       _sync_mode = false;
     }
   }
+  
+  // Clear flag after processing the update to prevent race conditions
+  _conn_param_update_pending = false;
 }
 
 void SerialBLEInterface::onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) {
