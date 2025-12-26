@@ -103,6 +103,12 @@ void SerialBLEInterface::onWrite(NimBLECharacteristic* pCharacteristic, NimBLECo
     return;
   }
   
+  if (connInfo.getConnHandle() != _conn_handle) {
+    BLE_DEBUG_PRINTLN("onWrite: ignoring write from stale connection handle %d (expected %d)", 
+                     connInfo.getConnHandle(), _conn_handle);
+    return;
+  }
+  
   auto val = pCharacteristic->getValue();
   size_t len = val.length();
   
