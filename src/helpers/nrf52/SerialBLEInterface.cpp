@@ -102,7 +102,38 @@ void SerialBLEInterface::onPairingComplete(uint16_t connection_handle, uint8_t a
 void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
   if (!instance) return;
   
-  if (evt->header.evt_id == BLE_GAP_EVT_CONN_PARAM_UPDATE_REQUEST) {
+  if (evt->header.evt_id == BLE_GAP_EVT_CONN_PARAM_UPDATE) {
+    uint16_t conn_handle = evt->evt.gap_evt.conn_handle;
+    if (instance->isValidConnection(conn_handle)) {
+      ble_gap_conn_params_t* params = &evt->evt.gap_evt.params.conn_param_update.conn_params;
+      uint16_t min_interval = params->min_conn_interval;
+      uint16_t max_interval = params->max_conn_interval;
+      uint16_t latency = params->slave_latency;
+      uint16_t timeout = params->conn_sup_timeout;
+      
+      BLE_DEBUG_PRINTLN("CONN_PARAM_UPDATE: handle=0x%04X, min_interval=%u, max_interval=%u, latency=%u, timeout=%u",
+                       conn_handle, min_interval, max_interval, latency, timeout);
+      
+      if (min_interval == BLE_SYNC_MIN_CONN_INTERVAL &&
+          max_interval == BLE_SYNC_MAX_CONN_INTERVAL &&
+          latency == BLE_SYNC_SLAVE_LATENCY &&
+          timeout == BLE_SYNC_CONN_SUP_TIMEOUT) {
+        if (!instance->_sync_mode) {
+          BLE_DEBUG_PRINTLN("Sync mode confirmed by connection parameters");
+          instance->_sync_mode = true;
+          instance->_last_activity_time = millis();
+        }
+      } else if (min_interval == BLE_MIN_CONN_INTERVAL &&
+                 max_interval == BLE_MAX_CONN_INTERVAL &&
+                 latency == BLE_SLAVE_LATENCY &&
+                 timeout == BLE_CONN_SUP_TIMEOUT) {
+        if (instance->_sync_mode) {
+          BLE_DEBUG_PRINTLN("Default mode confirmed by connection parameters");
+          instance->_sync_mode = false;
+        }
+      }
+    }
+  } else if (evt->header.evt_id == BLE_GAP_EVT_CONN_PARAM_UPDATE_REQUEST) {
     uint16_t conn_handle = evt->evt.gap_evt.conn_handle;
     if (instance->isValidConnection(conn_handle)) {
       BLE_DEBUG_PRINTLN("CONN_PARAM_UPDATE_REQUEST: handle=0x%04X, min_interval=%u, max_interval=%u, latency=%u, timeout=%u",
@@ -413,8 +444,7 @@ void SerialBLEInterface::requestSyncModeConnection() {
   
   uint32_t err_code = sd_ble_gap_conn_param_update(_conn_handle, &conn_params);
   if (err_code == NRF_SUCCESS) {
-    _sync_mode = true;
-    _last_activity_time = millis();
+    BLE_DEBUG_PRINTLN("Sync mode connection parameter update requested successfully");
   } else {
     BLE_DEBUG_PRINTLN("Failed to request sync mode connection: %lu", err_code);
   }
@@ -447,7 +477,7 @@ void SerialBLEInterface::requestDefaultConnection() {
   
   uint32_t err_code = sd_ble_gap_conn_param_update(_conn_handle, &conn_params);
   if (err_code == NRF_SUCCESS) {
-    _sync_mode = false;
+    BLE_DEBUG_PRINTLN("Default connection parameter update requested successfully");
   } else {
     BLE_DEBUG_PRINTLN("Failed to request default connection: %lu", err_code);
   }

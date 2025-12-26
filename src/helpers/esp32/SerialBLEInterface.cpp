@@ -96,6 +96,33 @@ void SerialBLEInterface::onConnParamsUpdate(NimBLEConnInfo& connInfo) {
                    interval_ms,
                    connInfo.getConnLatency(),
                    timeout_ms);
+  
+  if (connInfo.getConnHandle() != _conn_handle) {
+    return;
+  }
+  
+  uint16_t interval = connInfo.getConnInterval();
+  uint16_t latency = connInfo.getConnLatency();
+  uint16_t timeout = connInfo.getConnTimeout();
+  
+  if (latency == BLE_SYNC_SLAVE_LATENCY &&
+      timeout == BLE_SYNC_CONN_SUP_TIMEOUT &&
+      interval >= BLE_SYNC_MIN_CONN_INTERVAL &&
+      interval <= BLE_SYNC_MAX_CONN_INTERVAL) {
+    if (!_sync_mode) {
+      BLE_DEBUG_PRINTLN("Sync mode confirmed by connection parameters");
+      _sync_mode = true;
+      _last_activity_time = millis();
+    }
+  } else if (latency == BLE_SLAVE_LATENCY &&
+             timeout == BLE_CONN_SUP_TIMEOUT &&
+             interval >= BLE_MIN_CONN_INTERVAL &&
+             interval <= BLE_MAX_CONN_INTERVAL) {
+    if (_sync_mode) {
+      BLE_DEBUG_PRINTLN("Default mode confirmed by connection parameters");
+      _sync_mode = false;
+    }
+  }
 }
 
 void SerialBLEInterface::onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) {
@@ -391,8 +418,7 @@ void SerialBLEInterface::requestSyncModeConnection() {
                             BLE_SYNC_MAX_CONN_INTERVAL,
                             BLE_SYNC_SLAVE_LATENCY,
                             BLE_SYNC_CONN_SUP_TIMEOUT);
-  _sync_mode = true;
-  _last_activity_time = millis();
+  BLE_DEBUG_PRINTLN("Sync mode connection parameter update requested successfully");
 }
 
 void SerialBLEInterface::requestDefaultConnection() {
@@ -419,5 +445,5 @@ void SerialBLEInterface::requestDefaultConnection() {
                             BLE_MAX_CONN_INTERVAL,
                             BLE_SLAVE_LATENCY,
                             BLE_CONN_SUP_TIMEOUT);
-  _sync_mode = false;
+  BLE_DEBUG_PRINTLN("Default connection parameter update requested successfully");
 }
