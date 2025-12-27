@@ -437,6 +437,9 @@ void SerialBLEInterface::requestSyncModeConnection() {
     return;
   }
   
+  // Set flag immediately after check to prevent race condition
+  _conn_param_update_pending = true;
+  
   BLE_DEBUG_PRINTLN("Requesting sync mode connection: %u-%ums interval, latency=%u, %ums timeout",
                    BLE_SYNC_MIN_CONN_INTERVAL * 5 / 4,
                    BLE_SYNC_MAX_CONN_INTERVAL * 5 / 4,
@@ -451,11 +454,12 @@ void SerialBLEInterface::requestSyncModeConnection() {
   
   uint32_t err_code = sd_ble_gap_conn_param_update(_conn_handle, &conn_params);
   if (err_code == NRF_SUCCESS) {
-    _conn_param_update_pending = true;
     BLE_DEBUG_PRINTLN("Sync mode connection parameter update requested successfully");
   } else if (err_code == NRF_ERROR_BUSY) {
-    _conn_param_update_pending = true;
+    // Flag already set, request is pending
   } else {
+    // Clear flag on other errors so we can retry
+    _conn_param_update_pending = false;
     BLE_DEBUG_PRINTLN("Failed to request sync mode connection: %lu", err_code);
   }
 }
@@ -477,6 +481,9 @@ void SerialBLEInterface::requestDefaultConnection() {
     return;
   }
   
+  // Set flag immediately after check to prevent race condition
+  _conn_param_update_pending = true;
+  
   BLE_DEBUG_PRINTLN("Requesting default connection: %u-%ums interval, latency=%u, %ums timeout",
                    BLE_MIN_CONN_INTERVAL * 5 / 4,
                    BLE_MAX_CONN_INTERVAL * 5 / 4,
@@ -491,11 +498,12 @@ void SerialBLEInterface::requestDefaultConnection() {
   
   uint32_t err_code = sd_ble_gap_conn_param_update(_conn_handle, &conn_params);
   if (err_code == NRF_SUCCESS) {
-    _conn_param_update_pending = true;
     BLE_DEBUG_PRINTLN("Default connection parameter update requested successfully");
   } else if (err_code == NRF_ERROR_BUSY) {
-    _conn_param_update_pending = true;
+    // Flag already set, request is pending
   } else {
+    // Clear flag on other errors so we can retry
+    _conn_param_update_pending = false;
     BLE_DEBUG_PRINTLN("Failed to request default connection: %lu", err_code);
   }
 }

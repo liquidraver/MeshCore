@@ -414,6 +414,9 @@ void SerialBLEInterface::requestSyncModeConnection() {
     return;
   }
   
+  // Set flag immediately after check to prevent race condition
+  _conn_param_update_pending = true;
+  
   BLE_DEBUG_PRINTLN("Requesting sync mode connection: %u-%ums interval, latency=%u, %ums timeout",
                    BLE_SYNC_MIN_CONN_INTERVAL * 5 / 4,
                    BLE_SYNC_MAX_CONN_INTERVAL * 5 / 4,
@@ -425,7 +428,6 @@ void SerialBLEInterface::requestSyncModeConnection() {
                             BLE_SYNC_MAX_CONN_INTERVAL,
                             BLE_SYNC_SLAVE_LATENCY,
                             BLE_SYNC_CONN_SUP_TIMEOUT);
-  _conn_param_update_pending = true;
   BLE_DEBUG_PRINTLN("Sync mode connection parameter update requested successfully");
 }
 
@@ -446,6 +448,9 @@ void SerialBLEInterface::requestDefaultConnection() {
     return;
   }
   
+  // Set flag immediately after check to prevent race condition
+  _conn_param_update_pending = true;
+  
   BLE_DEBUG_PRINTLN("Requesting default connection: %u-%ums interval, latency=%u, %ums timeout",
                    BLE_MIN_CONN_INTERVAL * 5 / 4,
                    BLE_MAX_CONN_INTERVAL * 5 / 4,
@@ -457,6 +462,5 @@ void SerialBLEInterface::requestDefaultConnection() {
                             BLE_MAX_CONN_INTERVAL,
                             BLE_SLAVE_LATENCY,
                             BLE_CONN_SUP_TIMEOUT);
-  _conn_param_update_pending = true;
   BLE_DEBUG_PRINTLN("Default connection parameter update requested successfully");
 }
