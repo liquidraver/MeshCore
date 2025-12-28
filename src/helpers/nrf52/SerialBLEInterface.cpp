@@ -44,6 +44,7 @@ void SerialBLEInterface::onDisconnect(uint16_t connection_handle, uint8_t reason
       instance->_conn_handle = BLE_CONN_HANDLE_INVALID;
       instance->_isDeviceConnected = false;
       instance->clearBuffers();
+      instance->_last_health_check = millis();
     }
   }
 }
@@ -451,10 +452,11 @@ void SerialBLEInterface::requestSyncModeConnection() {
   uint32_t err_code = sd_ble_gap_conn_param_update(_conn_handle, &conn_params);
   if (err_code == NRF_SUCCESS) {
     BLE_DEBUG_PRINTLN("Sync mode connection parameter update requested successfully");
-  } else if (err_code == NRF_ERROR_BUSY) {
   } else {
     _conn_param_update_pending = false;
-    BLE_DEBUG_PRINTLN("Failed to request sync mode connection: %lu", err_code);
+    if (err_code != NRF_ERROR_BUSY) {
+      BLE_DEBUG_PRINTLN("Failed to request sync mode connection: %lu", err_code);
+    }
   }
 }
 
@@ -491,9 +493,10 @@ void SerialBLEInterface::requestDefaultConnection() {
   uint32_t err_code = sd_ble_gap_conn_param_update(_conn_handle, &conn_params);
   if (err_code == NRF_SUCCESS) {
     BLE_DEBUG_PRINTLN("Default connection parameter update requested successfully");
-  } else if (err_code == NRF_ERROR_BUSY) {
   } else {
     _conn_param_update_pending = false;
-    BLE_DEBUG_PRINTLN("Failed to request default connection: %lu", err_code);
+    if (err_code != NRF_ERROR_BUSY) {
+      BLE_DEBUG_PRINTLN("Failed to request default connection: %lu", err_code);
+    }
   }
 }

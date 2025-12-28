@@ -185,6 +185,7 @@ protected:
     _last_send_time = 0;
     _last_activity_time = 0;
     _sync_mode = false;
+    _conn_param_update_pending = false;
     _large_frame_count = 0;
     _large_frame_window_start = 0;
     send_queue.init();
