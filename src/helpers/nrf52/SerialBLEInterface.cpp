@@ -13,16 +13,16 @@ void SerialBLEInterface::onConnect(uint16_t connection_handle) {
     if (Bluefruit.connected() > 1) {
       uint32_t err_code = sd_ble_gap_disconnect(connection_handle, BLE_HCI_LOCAL_HOST_TERMINATED_CONNECTION);
       if (err_code != NRF_SUCCESS) {
-        BLE_DEBUG_PRINTLN("SerialBLEInterface: failed to disconnect duplicate connection: 0x%08lX", err_code);
+        BLE_DEBUG_PRINTLN("SerialBLEInterface: failed to disconnect second connection: 0x%08lX", err_code);
       } else {
-        BLE_DEBUG_PRINTLN("SerialBLEInterface: rejecting duplicate connection, already have %d connections", Bluefruit.connected() - 1);
+        BLE_DEBUG_PRINTLN("SerialBLEInterface: rejecting second connection, already have %d connection", Bluefruit.connected() - 1);
       }
       return;
     }
     
     instance->_conn_handle = connection_handle;
     instance->_isDeviceConnected = false;
-    instance->clearBuffers();
+    instance->clearBuffers(); // this seems redundant, but there were edge cases where stuff stuck in the buffers on rapid disconnect-connects
   }
 }
 
@@ -132,8 +132,6 @@ void SerialBLEInterface::onBLEEvent(ble_evt_t* evt) {
           instance->_sync_mode = false;
         }
       }
-      
-      // Clear flag after processing the update to prevent race conditions
       instance->_conn_param_update_pending = false;
     }
   } else if (evt->header.evt_id == BLE_GAP_EVT_CONN_PARAM_UPDATE_REQUEST) {
@@ -238,7 +236,7 @@ bool SerialBLEInterface::isValidConnection(uint16_t handle, bool requireWaitingF
 bool SerialBLEInterface::isAdvertising() const {
   ble_gap_addr_t adv_addr;
   uint32_t err_code = sd_ble_gap_adv_addr_get(0, &adv_addr);
-  (void)adv_addr;  // Suppress unused variable warning - address not needed, only return code
+  (void)adv_addr;  // address not needed, only return code
   return (err_code == NRF_SUCCESS);
 }
 
@@ -436,8 +434,6 @@ void SerialBLEInterface::requestSyncModeConnection() {
   if (_conn_param_update_pending) {
     return;
   }
-  
-  // Set flag immediately after check to prevent race condition
   _conn_param_update_pending = true;
   
   BLE_DEBUG_PRINTLN("Requesting sync mode connection: %u-%ums interval, latency=%u, %ums timeout",
@@ -456,9 +452,7 @@ void SerialBLEInterface::requestSyncModeConnection() {
   if (err_code == NRF_SUCCESS) {
     BLE_DEBUG_PRINTLN("Sync mode connection parameter update requested successfully");
   } else if (err_code == NRF_ERROR_BUSY) {
-    // Flag already set, request is pending
   } else {
-    // Clear flag on other errors so we can retry
     _conn_param_update_pending = false;
     BLE_DEBUG_PRINTLN("Failed to request sync mode connection: %lu", err_code);
   }
@@ -480,8 +474,6 @@ void SerialBLEInterface::requestDefaultConnection() {
   if (_conn_param_update_pending) {
     return;
   }
-  
-  // Set flag immediately after check to prevent race condition
   _conn_param_update_pending = true;
   
   BLE_DEBUG_PRINTLN("Requesting default connection: %u-%ums interval, latency=%u, %ums timeout",
@@ -500,9 +492,7 @@ void SerialBLEInterface::requestDefaultConnection() {
   if (err_code == NRF_SUCCESS) {
     BLE_DEBUG_PRINTLN("Default connection parameter update requested successfully");
   } else if (err_code == NRF_ERROR_BUSY) {
-    // Flag already set, request is pending
   } else {
-    // Clear flag on other errors so we can retry
     _conn_param_update_pending = false;
     BLE_DEBUG_PRINTLN("Failed to request default connection: %lu", err_code);
   }

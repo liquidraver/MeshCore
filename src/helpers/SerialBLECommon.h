@@ -9,7 +9,7 @@
 #define BLE_SLAVE_LATENCY          3
 #define BLE_CONN_SUP_TIMEOUT       500
 
-// Sync mode: higher throughput (15-30ms for Apple compliance)
+// Sync mode: higher throughput (min 15ms for Apple compliance)
 #define BLE_SYNC_MIN_CONN_INTERVAL   12
 #define BLE_SYNC_MAX_CONN_INTERVAL   24
 #define BLE_SYNC_SLAVE_LATENCY       0
@@ -18,6 +18,8 @@
 #define BLE_SYNC_INACTIVITY_TIMEOUT_MS  5000
 
 // Units: advertising interval=0.625ms
+// ESP randomly chooses between 32 and 338
+// max seems slow, but we can wait a few seconds for it to connect, worth the battery
 #define BLE_ADV_INTERVAL_MIN       32
 #define BLE_ADV_INTERVAL_MAX       338
 #define BLE_ADV_FAST_TIMEOUT       30
@@ -37,13 +39,14 @@
 
 #define BLE_CONN_HANDLE_INVALID  0xFFFF
 
-// ESP32 NimBLE MTU target.
+// BLE specific MTU target, ESP can do more, but we don't need it, so stay at max nRF52
 #define BLE_MAX_MTU              247
 
-// DLE request values.
+// ESP needs this to set manually, nRF52 handles it automatically
 #define BLE_DLE_MAX_TX_OCTETS    251
 #define BLE_DLE_MAX_TX_TIME_US   2120
 
+// nRF only, NimBLE cannot set TX power on ESP, so ESP is fixed 0dBm
 #ifndef BLE_TX_POWER
 #define BLE_TX_POWER 4
 #endif
@@ -53,13 +56,14 @@ struct SerialBLEFrame {
   uint8_t buf[MAX_FRAME_SIZE];
 };
 
+// 12 is adequate for most use cases
 #define FRAME_QUEUE_SIZE  12
 
 struct CircularFrameQueue {
   SerialBLEFrame frames[FRAME_QUEUE_SIZE];
-  uint8_t head;   // Write index (next position to write)
-  uint8_t tail;   // Read index (next position to read)
-  uint8_t count;  // Current number of frames in queue
+  uint8_t head;
+  uint8_t tail;
+  uint8_t count;
 
   void init() {
     head = 0;

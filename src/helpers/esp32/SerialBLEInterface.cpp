@@ -8,16 +8,16 @@ void SerialBLEInterface::onConnect(NimBLEServer* pServer, NimBLEConnInfo& connIn
   if (pServer->getConnectedCount() > 1) {
     bool success = pServer->disconnect(connInfo.getConnHandle());
     if (!success) {
-      BLE_DEBUG_PRINTLN("SerialBLEInterface: failed to disconnect duplicate connection");
+      BLE_DEBUG_PRINTLN("SerialBLEInterface: failed to disconnect second connection");
     } else {
-      BLE_DEBUG_PRINTLN("SerialBLEInterface: rejecting duplicate connection, already have %d connections", pServer->getConnectedCount() - 1);
+      BLE_DEBUG_PRINTLN("SerialBLEInterface: rejecting second connection, already have %d connection", pServer->getConnectedCount() - 1);
     }
     return;
   }
   
   _conn_handle = connInfo.getConnHandle();
   _isDeviceConnected = false;
-  clearBuffers();
+  clearBuffers(); // this seems redundant, but there were edge cases where stuff stuck in the buffers on rapid disconnect-connects
 }
 
 void SerialBLEInterface::onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) {
@@ -73,7 +73,6 @@ void SerialBLEInterface::onAuthenticationComplete(NimBLEConnInfo& connInfo) {
                        BLE_SLAVE_LATENCY,
                        BLE_CONN_SUP_TIMEOUT * 10);
       
-      // Request DLE.
       extern int ble_gap_set_data_len(uint16_t conn_handle, uint16_t tx_octets, uint16_t tx_time);
       int err_code = ble_gap_set_data_len(connInfo.getConnHandle(), BLE_DLE_MAX_TX_OCTETS, BLE_DLE_MAX_TX_TIME_US);
       if (err_code == 0) {
@@ -123,8 +122,6 @@ void SerialBLEInterface::onConnParamsUpdate(NimBLEConnInfo& connInfo) {
       _sync_mode = false;
     }
   }
-  
-  // Clear flag after processing the update to prevent race conditions
   _conn_param_update_pending = false;
 }
 
@@ -413,8 +410,6 @@ void SerialBLEInterface::requestSyncModeConnection() {
   if (_conn_param_update_pending) {
     return;
   }
-  
-  // Set flag immediately after check to prevent race condition
   _conn_param_update_pending = true;
   
   BLE_DEBUG_PRINTLN("Requesting sync mode connection: %u-%ums interval, latency=%u, %ums timeout",
@@ -447,8 +442,6 @@ void SerialBLEInterface::requestDefaultConnection() {
   if (_conn_param_update_pending) {
     return;
   }
-  
-  // Set flag immediately after check to prevent race condition
   _conn_param_update_pending = true;
   
   BLE_DEBUG_PRINTLN("Requesting default connection: %u-%ums interval, latency=%u, %ums timeout",
