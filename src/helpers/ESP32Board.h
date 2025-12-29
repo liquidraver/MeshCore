@@ -25,7 +25,9 @@ public:
   #ifdef PIN_VBAT_READ
     // battery read support
     pinMode(PIN_VBAT_READ, INPUT);
-    adcAttachPin(PIN_VBAT_READ);
+    // adcAttachPin(PIN_VBAT_READ); 
+    analogReadResolution(12); // Sets ADC to 12-bit (0-4095)
+    analogSetAttenuation(ADC_11db); // Sets attenuation for ~3.3V range
   #endif
 
   #ifdef P_LORA_TX_LED

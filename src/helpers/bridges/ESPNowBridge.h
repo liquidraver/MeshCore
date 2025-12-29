@@ -42,8 +42,8 @@
 class ESPNowBridge : public BridgeBase {
 private:
   static ESPNowBridge *_instance;
-  static void recv_cb(const uint8_t *mac, const uint8_t *data, int32_t len);
-  static void send_cb(const uint8_t *mac, esp_now_send_status_t status);
+  static void recv_cb(const esp_now_recv_info_t *info, const uint8_t *data, int len);
+  static void send_cb(const esp_now_send_info_t *info, esp_now_send_status_t status);
 
   /**
    * ESP-NOW Protocol Structure:
