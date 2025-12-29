@@ -1,5 +1,6 @@
 #include "ESPNOWRadio.h"
 #include <esp_now.h>
+#include <esp_mac.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
 
@@ -11,12 +12,12 @@ static uint8_t rx_buf[256];
 static uint8_t last_rx_len = 0;
 
 // callback when data is sent
-static void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+static void OnDataSent(const wifi_tx_info_t *tx_info, esp_now_send_status_t status) {
   is_send_complete = true;
   ESPNOW_DEBUG_PRINTLN("Send Status: %d", (int)status);
 }
 
-static void OnDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
+static void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   ESPNOW_DEBUG_PRINTLN("Recv: len = %d", len);
   memcpy(rx_buf, data, len);
   last_rx_len = len;
