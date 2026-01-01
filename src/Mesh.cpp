@@ -158,6 +158,10 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
               if (pkt->getPayloadType() == PAYLOAD_TYPE_PATH) {
                 int k = 0;
                 uint8_t path_len = data[k++];
+                if (path_len > MAX_PATH_SIZE || k + path_len + 1 > len) {
+                  MESH_DEBUG_PRINTLN("%s Mesh::onRecvPacket(): invalid path_len=%d", getLogDateTime(), (uint32_t)path_len);
+                  break;  // skip this peer, try next
+                }
                 uint8_t* path = &data[k]; k += path_len;
                 uint8_t extra_type = data[k++] & 0x0F;   // upper 4 bits reserved for future use
                 uint8_t* extra = &data[k];
