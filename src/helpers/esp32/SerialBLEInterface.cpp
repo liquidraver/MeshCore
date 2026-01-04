@@ -1,5 +1,6 @@
 #include "SerialBLEInterface.h"
 #include "../SerialBLECommon.h"
+#include "BLEBondMigration.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -171,6 +172,9 @@ void SerialBLEInterface::onWrite(NimBLECharacteristic* pCharacteristic, NimBLECo
 }
 
 void SerialBLEInterface::begin(const char* device_name, uint32_t pin_code) {
+  // Migrate bonds from Bluedroid to NimBLE (only runs if there is no nimble bond already && Bluedroid has at least one)
+  BLEBondMigration::migrateBluedroidBondsToNimBLE();
+
   NimBLEDevice::init(device_name);
   NimBLEDevice::setSecurityAuth(true, true, true);
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
