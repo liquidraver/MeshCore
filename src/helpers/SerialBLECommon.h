@@ -46,7 +46,7 @@
 #define BLE_DLE_MAX_TX_OCTETS    251
 #define BLE_DLE_MAX_TX_TIME_US   2120  // Not used by Bluedroid, only needed if we migrate to NimBLE
 
-// nRF only, NimBLE cannot set TX power on ESP, so ESP is fixed 0dBm
+// nRF only now, keeping this to preserver current settings
 #ifndef BLE_TX_POWER
 #define BLE_TX_POWER 4
 #endif
