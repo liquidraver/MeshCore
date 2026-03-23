@@ -122,16 +122,16 @@ bool PingPongHelper::extractPathInfo(const mesh::Packet* packet, uint8_t& hop_co
         return false;
     }
     
-    hop_count = packet->path_len;
-    
-    if (packet->path_len == 0) {
+    hop_count = packet->getPathHashCount();
+
+    if (packet->getPathHashCount() == 0) {
         strncpy(router_ids_buffer, "direct", buffer_size - 1);
         router_ids_buffer[buffer_size - 1] = '\0';
         return true;
     }
-    
+
     size_t pos = 0;
-    for (uint8_t i = 0; i < packet->path_len && pos < buffer_size - 3; i++) {
+    for (uint8_t i = 0; i < packet->getPathByteLen() && pos < buffer_size - 3; i++) {
         if (i > 0) {
             router_ids_buffer[pos++] = ',';
         }
@@ -160,7 +160,7 @@ bool PingPongHelper::processMessage(BaseChatMesh& mesh, const ContactInfo& from,
         return false;
     }
     
-    uint8_t hop_count = packet->path_len;
+    uint8_t hop_count = packet->getPathHashCount();
     char router_ids_buffer[256];
     
     if (!extractPathInfo(packet, hop_count, router_ids_buffer, sizeof(router_ids_buffer))) {

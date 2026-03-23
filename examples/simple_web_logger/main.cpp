@@ -10,7 +10,6 @@
 #include <SPIFFS.h>
 #include <WiFi.h>
 #include "time.h"
-#include <queue>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
@@ -89,38 +88,66 @@ void task_sleep(uint32_t ms) {
   vTaskDelay(ms / portTICK_PERIOD_MS);
 }
 
+#define MSG_QUEUE_SIZE  32
+#define MSG_MAX_LEN     1024
+
 struct {
-  std::queue<char*> queue;
+  SemaphoreHandle_t mutex;
+  char    buf[MSG_QUEUE_SIZE][MSG_MAX_LEN];
+  uint8_t head, tail, count;
   unsigned discarded;
 
-  void push(String str) {
-    unsigned bef = ESP.getFreeHeap();
+  void init() {
+    mutex = xSemaphoreCreateMutex();
+    head = tail = count = discarded = 0;
+  }
 
-    char* msgData = new char[str.length() + 1];
-    str.toCharArray(msgData, str.length() + 1);
-  
-    // discard old
-    while (queue.size() > 32) {
+  void push(const char* str) {
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    if (count == MSG_QUEUE_SIZE) {
       discarded++;
-      char* ptr = queue.front();
-      Serial.printf("Discarded message (%u) %s\n", discarded, ptr);
-      queue.pop();
-      delete[] ptr;
+      Serial.printf("Discarded message (%u)\n", discarded);
+      head = (head + 1) % MSG_QUEUE_SIZE;
+      count--;
     }
-    queue.push(msgData);
-
-    unsigned aft = ESP.getFreeHeap();
+    strncpy(buf[tail], str, MSG_MAX_LEN - 1);
+    buf[tail][MSG_MAX_LEN - 1] = '\0';
+    tail = (tail + 1) % MSG_QUEUE_SIZE;
+    count++;
+    xSemaphoreGive(mutex);
   }
 
   void push(const JsonDocument& doc) {
-    String postData;
-    serializeJson(doc, postData);
-    push(postData);
+    char tmp[MSG_MAX_LEN];
+    serializeJson(doc, tmp, sizeof(tmp));
+    push(tmp);
   }
 
-  size_t size() { return queue.size(); }
-  char* front() { return queue.front(); }
-  void  pop()   { queue.pop(); }
+  size_t size() {
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    size_t s = count;
+    xSemaphoreGive(mutex);
+    return s;
+  }
+
+  // Copy front message into out, returns false if empty
+  bool peek(char* out, size_t outLen) {
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    if (count == 0) { xSemaphoreGive(mutex); return false; }
+    strncpy(out, buf[head], outLen - 1);
+    out[outLen - 1] = '\0';
+    xSemaphoreGive(mutex);
+    return true;
+  }
+
+  void pop() {
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    if (count > 0) {
+      head = (head + 1) % MSG_QUEUE_SIZE;
+      count--;
+    }
+    xSemaphoreGive(mutex);
+  }
 } messageQueue;
 
 unsigned long getTimestamp() {
@@ -241,7 +268,7 @@ class MyMesh : public BaseChatMesh, ContactVisitor {
         } else {
           // Retry the packet
           MESH_DEBUG_PRINTLN("[RETRY] Retrying packet #%d (not heard)", retry_count);
-          sendFlood(packet, 0);  // Send immediately
+          sendFlood(packet, (uint32_t)0);  // Send immediately
           // Note: Don't track retries - they're already tracked from original send
           
           if (retry_count < 2) {  // Allow one more retry
@@ -638,7 +665,7 @@ protected:
         Serial.printf("        payload-type:  %s (%u)\n", type2str(phType), phType); // 4 bits
         Serial.printf("        payload-vers:  %u\n", (pkt->header >> PH_VER_SHIFT) & PH_VER_MASK); // 2 bits
         Serial.printf("      payload_len:     %u\n", pkt->payload_len);
-        Serial.printf("      path_len:        %u\n", pkt->path_len);
+        Serial.printf("      path_len:        %u (hash_size=%u, hash_count=%u, byte_len=%u)\n", pkt->path_len, pkt->getPathHashSize(), pkt->getPathHashCount(), pkt->getPathByteLen());
         Serial.printf("      transport_codes: %u %u\n", pkt->transport_codes[0], pkt->transport_codes[1]);
         Serial.printf("      snr:             %i\n", pkt->_snr);
         Serial.println();
@@ -648,12 +675,12 @@ protected:
       pkt->calculatePacketHash(hash);
 
       char sender[(PUB_KEY_SIZE * 2) + 1];
-      char path[(pkt->path_len * 2) + 1];
+      char path[(pkt->getPathByteLen() * 2) + 1];
       char payload[(pkt->payload_len * 2) + 1];
       char strhash[MAX_HASH_SIZE * 2 + 1];
 
       mesh::Utils::toHex(sender, self_id.pub_key, PUB_KEY_SIZE);
-      mesh::Utils::toHex(path, pkt->path, pkt->path_len);
+      mesh::Utils::toHex(path, pkt->path, pkt->getPathByteLen());
       mesh::Utils::toHex(payload, pkt->payload, pkt->payload_len);
       mesh::Utils::toHex(strhash, hash, MAX_HASH_SIZE);
 
@@ -752,18 +779,22 @@ protected:
   String getPath(mesh::Packet* pkt) {
     String path = "";
     if (!pkt->isRouteDirect()) {
-      char buf[4];
-      for (size_t i = 0; i < pkt->path_len; i++) {
-        sprintf(buf, "%02x", pkt->path[i]);
-        if (i != 0) path += ",";
-        path += buf;
+      uint8_t hash_size = pkt->getPathHashSize();
+      uint8_t hash_count = pkt->getPathHashCount();
+      char buf[8];
+      for (uint8_t h = 0; h < hash_count; h++) {
+        if (h != 0) path += ",";
+        for (uint8_t b = 0; b < hash_size; b++) {
+          sprintf(buf, "%02x", pkt->path[h * hash_size + b]);
+          path += buf;
+        }
       }
     }
     return path;
   }
 
   void onContactPathUpdated(const ContactInfo& contact) override {
-    Serial.printf("PATH to: %s, path_len=%d\n", contact.name, (int32_t) contact.out_path_len);
+    Serial.printf("PATH to: %s, path_len=%u\n", contact.name, (unsigned) contact.out_path_len);
     saveContacts();
   }
 
@@ -874,9 +905,9 @@ protected:
       
       // If message came via flood, temporarily reset path so response uses flood too (like companion_radio)
       ContactInfo* from_mutable = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
-      auto save_path_len = from_mutable ? from_mutable->out_path_len : -1;
+      uint8_t save_path_len = from_mutable ? from_mutable->out_path_len : OUT_PATH_UNKNOWN;
       if (from_mutable && pkt->isRouteFlood()) {
-        from_mutable->out_path_len = -1;
+        from_mutable->out_path_len = OUT_PATH_UNKNOWN;
       }
       sendMessage(from, getRTCClock()->getCurrentTime(), 0, echo, expected_ack_crc, est_timeout);
       if (from_mutable) {
@@ -905,9 +936,9 @@ protected:
           
           // If message came via flood, temporarily reset path so response uses flood too (like companion_radio)
           ContactInfo* from_mutable = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
-          auto save_path_len = from_mutable ? from_mutable->out_path_len : -1;
+          uint8_t save_path_len = from_mutable ? from_mutable->out_path_len : OUT_PATH_UNKNOWN;
           if (from_mutable && pkt->isRouteFlood()) {
-            from_mutable->out_path_len = -1;
+            from_mutable->out_path_len = OUT_PATH_UNKNOWN;
           }
           sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
           if (from_mutable) {
@@ -923,9 +954,9 @@ protected:
           
           // If message came via flood, temporarily reset path so response uses flood too (like companion_radio)
           ContactInfo* from_mutable = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
-          auto save_path_len = from_mutable ? from_mutable->out_path_len : -1;
+          uint8_t save_path_len = from_mutable ? from_mutable->out_path_len : OUT_PATH_UNKNOWN;
           if (from_mutable && pkt->isRouteFlood()) {
-            from_mutable->out_path_len = -1;
+            from_mutable->out_path_len = OUT_PATH_UNKNOWN;
           }
           sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
           if (from_mutable) {
@@ -944,9 +975,9 @@ protected:
         
         // If message came via flood, temporarily reset path so response uses flood too (like companion_radio)
         ContactInfo* from_mutable = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
-        auto save_path_len = from_mutable ? from_mutable->out_path_len : -1;
+        uint8_t save_path_len = from_mutable ? from_mutable->out_path_len : OUT_PATH_UNKNOWN;
         if (from_mutable && pkt->isRouteFlood()) {
-          from_mutable->out_path_len = -1;
+          from_mutable->out_path_len = OUT_PATH_UNKNOWN;
         }
         sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
         if (from_mutable) {
@@ -964,9 +995,9 @@ protected:
         
         // If message came via flood, temporarily reset path so response uses flood too (like companion_radio)
         ContactInfo* from_mutable = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
-        auto save_path_len = from_mutable ? from_mutable->out_path_len : -1;
+        uint8_t save_path_len = from_mutable ? from_mutable->out_path_len : OUT_PATH_UNKNOWN;
         if (from_mutable && pkt->isRouteFlood()) {
-          from_mutable->out_path_len = -1;
+          from_mutable->out_path_len = OUT_PATH_UNKNOWN;
         }
         sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
         if (from_mutable) {
@@ -990,9 +1021,9 @@ protected:
         
         // If message came via flood, temporarily reset path so response uses flood too (like companion_radio)
         ContactInfo* from_mutable = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
-        auto save_path_len = from_mutable ? from_mutable->out_path_len : -1;
+        uint8_t save_path_len = from_mutable ? from_mutable->out_path_len : OUT_PATH_UNKNOWN;
         if (from_mutable && pkt->isRouteFlood()) {
-          from_mutable->out_path_len = -1;
+          from_mutable->out_path_len = OUT_PATH_UNKNOWN;
         }
         sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
         if (from_mutable) {
@@ -1025,9 +1056,9 @@ protected:
         
         // If message came via flood, temporarily reset path so response uses flood too (like companion_radio)
         ContactInfo* from_mutable = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
-        auto save_path_len = from_mutable ? from_mutable->out_path_len : -1;
+        uint8_t save_path_len = from_mutable ? from_mutable->out_path_len : OUT_PATH_UNKNOWN;
         if (from_mutable && pkt->isRouteFlood()) {
-          from_mutable->out_path_len = -1;
+          from_mutable->out_path_len = OUT_PATH_UNKNOWN;
         }
         sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
         if (from_mutable) {
@@ -1045,9 +1076,9 @@ protected:
         
         // If message came via flood, temporarily reset path so response uses flood too (like companion_radio)
         ContactInfo* from_mutable = lookupContactByPubKey(from.id.pub_key, PUB_KEY_SIZE);
-        auto save_path_len = from_mutable ? from_mutable->out_path_len : -1;
+        uint8_t save_path_len = from_mutable ? from_mutable->out_path_len : OUT_PATH_UNKNOWN;
         if (from_mutable && pkt->isRouteFlood()) {
-          from_mutable->out_path_len = -1;
+          from_mutable->out_path_len = OUT_PATH_UNKNOWN;
         }
         sendMessage(from, getRTCClock()->getCurrentTime(), 0, response, expected_ack_crc, est_timeout);
         if (from_mutable) {
@@ -1118,7 +1149,7 @@ protected:
     if (pkt->isRouteDirect()) {
       MESH_DEBUG_PRINTLN("PUBLIC CHANNEL MSG -> (Direct!)");
     } else {
-      MESH_DEBUG_PRINTLN("PUBLIC CHANNEL MSG -> (Flood) hops %d", pkt->path_len);
+      MESH_DEBUG_PRINTLN("PUBLIC CHANNEL MSG -> (Flood) hops %d", pkt->getPathHashCount());
     }
 
     MESH_DEBUG_PRINTLN("   %s", text);
@@ -1160,7 +1191,7 @@ protected:
             // Generate pong response
             char response[256];
             char router_ids_buffer[256];
-            uint8_t hop_count = pkt->path_len;
+            uint8_t hop_count = pkt->getPathHashCount();
             
             // Extract path info
             if (PingPongHelper::extractPathInfo(pkt, hop_count, router_ids_buffer, sizeof(router_ids_buffer))) {
@@ -1890,8 +1921,8 @@ void WiFiTaskCode(void * pvParameters) {
       sendsys = false;
       lastConencted = millis();
 
-      // Check if it's time to sync (use current millis, not lastConencted)
-      if (millis() >= ntpNext) {
+      // Check if it's time to sync (rollover-safe)
+      if ((int32_t)(millis() - ntpNext) >= 0) {
         ntpSynced = false;
       }
 
@@ -1922,7 +1953,7 @@ void WiFiTaskCode(void * pvParameters) {
         // If failed, ntpSynced stays false and will retry next loop iteration
       }
 
-      if (the_mesh.getLogPrefs()->selfreport > 0 && millis() > nextReport) {
+      if (the_mesh.getLogPrefs()->selfreport > 0 && (int32_t)(millis() - nextReport) >= 0) {
         char sender[(PUB_KEY_SIZE * 2) + 1];
         mesh::Utils::toHex(sender, the_mesh.getPubKey(), PUB_KEY_SIZE);
   
@@ -1949,29 +1980,25 @@ void WiFiTaskCode(void * pvParameters) {
         }
       }
 
-      if (messageQueue.size() > 0) {
+      static char msgBuf[MSG_MAX_LEN];
+      if (messageQueue.peek(msgBuf, sizeof(msgBuf))) {
         String auth = "Bearer ";
         auth += the_mesh.getLogPrefs()->auth;
 
-        char *ptr = messageQueue.front();
-        if (ptr != nullptr) {
-          if (the_mesh.debugPrint()) {
-            Serial.printf("Queue peek %s\n", ptr);
-          }
+        if (the_mesh.debugPrint()) {
+          Serial.printf("Queue peek %s\n", msgBuf);
+        }
 
-          if (memcmp(the_mesh.getLogPrefs()->url, "http", 4) != 0) {
-            Serial.println("Url not set.");
-            messageQueue.pop();
-            delete[] ptr;
-          }
-
+        if (memcmp(the_mesh.getLogPrefs()->url, "http", 4) != 0) {
+          Serial.println("Url not set.");
+          messageQueue.pop();
+        } else {
           bool sent = false;
 
-          // WiFi send
           HTTPClient https;
           unsigned long http_start = millis();
 
-          if (https.begin(*client, the_mesh.getLogPrefs()->url)) {  // HTTPS connection
+          if (https.begin(*client, the_mesh.getLogPrefs()->url)) {
             https.addHeader("Content-Type", "application/json");
 
             if (auth.length() > 7) {
@@ -1981,18 +2008,18 @@ void WiFiTaskCode(void * pvParameters) {
             if (the_mesh.debugPrint()) {
               Serial.println("[HTTP] Post data");
             }
-            int httpResponseCode = https.POST(ptr);
+            int httpResponseCode = https.POST(msgBuf);
             unsigned long http_time = millis() - http_start;
-        
+
             if (httpResponseCode > 0) {
-              String response = https.getString();
+              https.getString();  // drain response body
               Serial.printf("[HTTP] POST: %d (took %lums)\n", httpResponseCode, http_time);
               sent = true;
             } else {
               Serial.printf("[HTTP] ERROR: %d (took %lums)\n", httpResponseCode, http_time);
               ++sendFailures;
             }
-        
+
             https.end();
           } else {
             ++sendFailures;
@@ -2000,18 +2027,12 @@ void WiFiTaskCode(void * pvParameters) {
           }
 
           if (sent) {
-            unsigned bef = ESP.getFreeHeap();
             sendFailures = 0;
             messageQueue.pop();
-            delete[] ptr;
-            unsigned aft = ESP.getFreeHeap();
-            if (the_mesh.debugPrint()) {
-              Serial.printf("free mem: %u -> %u >> %d\n",bef,aft,bef-aft);
-            }
           }
         }
       }
-    } else if (connected && (millis() > (lastConencted + 5000) || sendFailures > 5)) {
+    } else if (connected && (millis() - lastConencted > 5000 || sendFailures > 5)) {
       connected = false;
       sendFailures = 0;
       char sender[(PUB_KEY_SIZE * 2) + 1];
@@ -2066,6 +2087,8 @@ void setup() {
 
   fast_rng.begin(radio_get_rng_seed());
 
+  messageQueue.init();
+
   SPIFFS.begin(true);
   the_mesh.begin(SPIFFS);
 
@@ -2086,7 +2109,9 @@ void loop() {
   static unsigned long max_loop_time = 0;
   static unsigned long last_pool_check = 0;
   unsigned long loop_start = millis();
-  
+
+  the_mesh.getRTCClock()->tick();
+
   unsigned long mesh_start = millis();
   the_mesh.loop();
   unsigned long mesh_time = millis() - mesh_start;

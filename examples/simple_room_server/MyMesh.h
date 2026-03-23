@@ -26,11 +26,11 @@
 /* ------------------------------ Config -------------------------------- */
 
 #ifndef FIRMWARE_BUILD_DATE
-  #define FIRMWARE_BUILD_DATE   "2 Oct 2025"
+  #define FIRMWARE_BUILD_DATE   "20 Mar 2026"
 #endif
 
 #ifndef FIRMWARE_VERSION
-  #define FIRMWARE_VERSION   "v1.9.1"
+  #define FIRMWARE_VERSION   "v1.14.1"
 #endif
 
 #ifndef LORA_FREQ
@@ -94,8 +94,8 @@ class MyMesh : public mesh::Mesh, public CommonCLICallbacks {
   unsigned long next_local_advert, next_flood_advert;
   bool _logging;
   NodePrefs _prefs;
-  CommonCLI _cli;
   ClientACL acl;
+  CommonCLI _cli;
   unsigned long dirty_contacts_expiry;
   uint8_t reply_data[MAX_PACKET_PAYLOAD];
   unsigned long next_push;
@@ -154,7 +154,7 @@ protected:
 
 #if ENV_INCLUDE_GPS == 1
   void applyGpsPrefs() {
-    sensors.setSettingByKey("gps", _prefs.gps_enabled?"1":"0");
+    sensors.setSettingValue("gps", _prefs.gps_enabled?"1":"0");
   }
 #endif
 
@@ -177,7 +177,7 @@ public:
 
   void applyTempRadioParams(float freq, float bw, uint8_t sf, uint8_t cr, int timeout_mins) override;
   bool formatFileSystem() override;
-  void sendSelfAdvertisement(int delay_millis) override;
+  void sendSelfAdvertisement(int delay_millis, bool flood) override;
   void updateAdvertTimer() override;
   void updateFloodAdvertTimer() override;
 
@@ -188,7 +188,7 @@ public:
   }
 
   void dumpLogFile() override;
-  void setTxPower(uint8_t power_dbm) override;
+  void setTxPower(int8_t power_dbm) override;
 
   void formatNeighborsReply(char *reply) override {
     strcpy(reply, "not supported");
